@@ -55,6 +55,13 @@ enum class AppTheme {
     Nordisk
 };
 
+// Enum för dragfunktionalitet
+enum class DragDropAction {
+    None,
+    Upload,
+    Download
+};
+
 QT_BEGIN_NAMESPACE
 namespace Ui {
 class MainWindow;
@@ -68,6 +75,13 @@ class MainWindow : public QMainWindow
 public:
     MainWindow(QWidget *parent = nullptr);
     ~MainWindow();
+
+protected:
+    // Händelsehanterare för drag och drop
+    bool eventFilter(QObject* watched, QEvent* event) override;
+    void dragEnterEvent(QDragEnterEvent* event) override;
+    void dragMoveEvent(QDragMoveEvent* event) override;
+    void dropEvent(QDropEvent* event) override;
 
 public slots:
     // Temahantering
@@ -89,8 +103,6 @@ private slots:
     void onFtpDisconnected();
     void onFtpError(const QString &errorMessage);
     void onDirectoryListed(const QStringList &entries);
-    void onDownloadProgress(qint64 bytesReceived, qint64 bytesTotal);
-    void onUploadProgress(qint64 bytesSent, qint64 bytesTotal);
     void onDownloadFinished(bool success);
     void onUploadFinished(bool success);
     void onLocalDirectorySelected(const QModelIndex &index);
@@ -106,6 +118,15 @@ private slots:
     void saveSettings();
     void updateConnectionsList();
     void showSavedConnectionsDialog();
+    
+    // Drag och Drop
+    void handleLocalDrag(const QModelIndex &index);
+    void handleRemoteDrag(const QModelIndex &index);
+    void handleDrop(const QModelIndex &index, DragDropAction action);
+
+    // Slots för överföringsframsteg
+    void onFtpUploadProgress(const QString &filePath, qint64 bytesSent, qint64 bytesTotal);
+    void onFtpDownloadProgress(const QString &filePath, qint64 bytesReceived, qint64 bytesTotal);
 
 private:
     Ui::MainWindow *ui;
@@ -118,6 +139,10 @@ private:
     // Modeller för lokal och fjärrfilvisning
     QFileSystemModel *m_localFileModel;
     QStandardItemModel *m_remoteFileModel;
+    
+    // Drag och drop-hantering
+    DragDropAction m_currentDragAction;
+    QString m_dragSourcePath;
     
     // Vy-komponenter
     QTreeView *m_localView;

@@ -87,38 +87,32 @@ void FtpManager::listDirectory(const QString &path)
 void FtpManager::downloadFile(const QString &remotePath, const QString &localPath)
 {
     if (!m_connected) {
-        emit error("Not connected to server");
+        emit error(tr("Not connected to FTP server"));
         return;
     }
 
-    QUrl url;
-    url.setScheme("ftp");
-    url.setHost(m_host);
-    url.setPort(m_port);
+    QUrl url(QString("ftp://%1:%2%3").arg(m_host).arg(m_port).arg(remotePath));
     url.setUserName(m_username);
     url.setPassword(m_password);
-    url.setPath(remotePath);
 
-    QNetworkReply *reply = m_networkManager->get(QNetworkRequest(url));
-    m_currentReply = reply;
-
-    // Skapa fil för att spara data
+    QNetworkRequest request(url);
+    m_currentReply = m_networkManager->get(request);
+    
     m_currentFile = new QFile(localPath);
     if (!m_currentFile->open(QIODevice::WriteOnly)) {
-        emit error("Could not open local file for writing");
-        reply->abort();
-        delete m_currentFile;
-        m_currentFile = nullptr;
+        emit error(tr("Could not open local file for writing"));
         return;
     }
 
-    connect(reply, &QNetworkReply::downloadProgress,
-            this, &FtpManager::downloadProgress);
-
-    connect(reply, &QNetworkReply::readyRead, [this, reply]() {
+    connect(m_currentReply, &QNetworkReply::readyRead, this, [this]() {
         if (m_currentFile) {
-            m_currentFile->write(reply->readAll());
+            m_currentFile->write(m_currentReply->readAll());
         }
+    });
+
+    connect(m_currentReply, &QNetworkReply::downloadProgress, this, 
+            [this, localPath](qint64 bytesReceived, qint64 bytesTotal) {
+        emit downloadProgress(localPath, bytesReceived, bytesTotal);
     });
 
     emit downloadStarted(QFileInfo(localPath).fileName());
@@ -127,33 +121,27 @@ void FtpManager::downloadFile(const QString &remotePath, const QString &localPat
 void FtpManager::uploadFile(const QString &localPath, const QString &remotePath)
 {
     if (!m_connected) {
-        emit error("Not connected to server");
+        emit error(tr("Not connected to FTP server"));
         return;
     }
 
-    // Öppna den lokala filen för läsning
-    QFile *file = new QFile(localPath);
-    if (!file->open(QIODevice::ReadOnly)) {
-        emit error("Could not open local file for reading");
-        delete file;
+    QFile file(localPath);
+    if (!file.open(QIODevice::ReadOnly)) {
+        emit error(tr("Could not open local file for reading"));
         return;
     }
 
-    QUrl url;
-    url.setScheme("ftp");
-    url.setHost(m_host);
-    url.setPort(m_port);
+    QUrl url(QString("ftp://%1:%2%3").arg(m_host).arg(m_port).arg(remotePath));
     url.setUserName(m_username);
     url.setPassword(m_password);
-    url.setPath(remotePath);
 
     QNetworkRequest request(url);
-    QNetworkReply *reply = m_networkManager->put(request, file);
-    m_currentReply = reply;
-    m_currentFile = file;
+    m_currentReply = m_networkManager->put(request, &file);
 
-    connect(reply, &QNetworkReply::uploadProgress,
-            this, &FtpManager::uploadProgress);
+    connect(m_currentReply, &QNetworkReply::uploadProgress, this, 
+            [this, remotePath](qint64 bytesSent, qint64 bytesTotal) {
+        emit uploadProgress(remotePath, bytesSent, bytesTotal);
+    });
 
     emit uploadStarted(QFileInfo(localPath).fileName());
 }

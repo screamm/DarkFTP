@@ -20,6 +20,13 @@
 #include <QScreen>
 #include <QCheckBox>
 #include <QDebug>
+#include <QDrag>
+#include <QMimeData>
+#include <QDragEnterEvent>
+#include <QDragMoveEvent>
+#include <QDropEvent>
+#include <QTimer>
+#include <QRandomGenerator>
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -31,6 +38,7 @@ MainWindow::MainWindow(QWidget *parent)
     , m_remoteFileModel(new QStandardItemModel(this))
     , m_currentLocalPath(QDir::homePath())
     , m_currentRemotePath("/")
+    , m_currentDragAction(DragDropAction::None)
     , m_connectButton(nullptr)
     , m_disconnectButton(nullptr)
     , m_savedConnectionsList(nullptr)
@@ -73,8 +81,19 @@ MainWindow::MainWindow(QWidget *parent)
         connect(m_ftpManager, &FtpManager::connected, this, &MainWindow::onFtpConnected);
         connect(m_ftpManager, &FtpManager::disconnected, this, &MainWindow::onFtpDisconnected);
         connect(m_ftpManager, &FtpManager::directoryListed, this, &MainWindow::onDirectoryListed);
-        connect(m_ftpManager, &FtpManager::downloadProgress, this, &MainWindow::onDownloadProgress);
-        connect(m_ftpManager, &FtpManager::uploadProgress, this, &MainWindow::onUploadProgress);
+        
+        // Anpassa anslutningar för att hantera filsökvägar i signalerna
+        connect(m_ftpManager, &FtpManager::downloadProgress, 
+                this, [=](const QString &filePath, qint64 bytesReceived, qint64 bytesTotal) {
+                    // Skicka vidare till onFtpDownloadProgress
+                    onFtpDownloadProgress(filePath, bytesReceived, bytesTotal);
+                });
+        connect(m_ftpManager, &FtpManager::uploadProgress, 
+                this, [=](const QString &filePath, qint64 bytesSent, qint64 bytesTotal) {
+                    // Skicka vidare till onFtpUploadProgress
+                    onFtpUploadProgress(filePath, bytesSent, bytesTotal);
+                });
+        
         connect(m_ftpManager, &FtpManager::downloadFinished, this, &MainWindow::onDownloadFinished);
         connect(m_ftpManager, &FtpManager::uploadFinished, this, &MainWindow::onUploadFinished);
         
@@ -83,8 +102,13 @@ MainWindow::MainWindow(QWidget *parent)
         connect(m_sftpManager, &SftpManager::connected, this, &MainWindow::onFtpConnected);
         connect(m_sftpManager, &SftpManager::disconnected, this, &MainWindow::onFtpDisconnected);
         connect(m_sftpManager, &SftpManager::directoryListed, this, &MainWindow::onDirectoryListed);
-        connect(m_sftpManager, &SftpManager::downloadProgress, this, &MainWindow::onDownloadProgress);
-        connect(m_sftpManager, &SftpManager::uploadProgress, this, &MainWindow::onUploadProgress);
+        
+        // Anpassa anslutningar för att hantera filsökvägar i signalerna
+        connect(m_sftpManager, &SftpManager::downloadProgress, 
+                this, &MainWindow::onFtpDownloadProgress);
+        connect(m_sftpManager, &SftpManager::uploadProgress, 
+                this, &MainWindow::onFtpUploadProgress);
+        
         connect(m_sftpManager, &SftpManager::downloadFinished, this, &MainWindow::onDownloadFinished);
         connect(m_sftpManager, &SftpManager::uploadFinished, this, &MainWindow::onUploadFinished);
         connect(m_sftpManager, &SftpManager::logMessage, this, &MainWindow::appendToLog);
@@ -884,36 +908,65 @@ void MainWindow::deleteConnection()
 
 void MainWindow::setupModels()
 {
-    // Konfigurera lokal filmodell
-    m_localFileModel->setRootPath(m_currentLocalPath);
-    m_localFileModel->setFilter(QDir::AllEntries | QDir::NoDotAndDotDot);
-    m_localView->setModel(m_localFileModel);
-    m_localView->setRootIndex(m_localFileModel->index(m_currentLocalPath));
-    
-    // Konfigurera kolumner för lokalfilsvy
-    m_localView->setColumnWidth(0, 250); // Namn
-    m_localView->setSortingEnabled(true);
-    m_localView->setAlternatingRowColors(true);
-    m_localView->setAnimated(true);
-    m_localView->setIndentation(20);
-    m_localView->setSelectionBehavior(QAbstractItemView::SelectRows);
-    
-    // Konfigurera fjärrfilmodell
-    m_remoteFileModel->setHorizontalHeaderLabels({tr("Namn"), tr("Storlek"), tr("Typ"), tr("Ändrad")});
-    m_remoteView->setModel(m_remoteFileModel);
-    m_remoteView->setSortingEnabled(true);
-    m_remoteView->setAlternatingRowColors(true);
-    m_remoteView->setSelectionBehavior(QAbstractItemView::SelectRows);
-    
-    // Sätt teckensnitt för bättre läsbarhet
-    QFont viewFont("Segoe UI", 10);
-    m_localView->setFont(viewFont);
-    m_remoteView->setFont(viewFont);
-    
-    // Ställ in kolumnbredd för fjärrfilsvyn
-    m_remoteView->setColumnWidth(0, 250); // Namn
-    m_remoteView->setColumnWidth(1, 100); // Storlek
-    m_remoteView->setColumnWidth(2, 80);  // Typ
+    try {
+        qDebug() << "Setting up models";
+        // Setup local file model
+        m_localFileModel = new QFileSystemModel(this);
+        m_localFileModel->setRootPath(QDir::homePath());
+        
+        m_localView->setModel(m_localFileModel);
+        m_localView->setRootIndex(m_localFileModel->index(QDir::homePath()));
+        m_localView->setSortingEnabled(true);
+        m_localView->setAlternatingRowColors(true);
+        m_localView->setAnimated(true);
+        m_localView->setIndentation(20);
+        m_localView->setSelectionBehavior(QAbstractItemView::SelectRows);
+        m_localView->setFont(QFont("Segoe UI", 10));
+        
+        // Aktivera drag och drop för lokalvyn
+        m_localView->setDragEnabled(true);
+        m_localView->setAcceptDrops(true);
+        m_localView->setDropIndicatorShown(true);
+        m_localView->setDragDropMode(QAbstractItemView::DragDrop);
+        m_localView->installEventFilter(this);
+        
+        // Setup remote file model
+        m_remoteFileModel = new QStandardItemModel(0, 3, this);
+        m_remoteFileModel->setHorizontalHeaderLabels(QStringList() << tr("Namn") << tr("Storlek") << tr("Typ"));
+        
+        m_remoteView->setModel(m_remoteFileModel);
+        m_remoteView->setSortingEnabled(true);
+        m_remoteView->setAlternatingRowColors(true);
+        m_remoteView->setFont(QFont("Segoe UI", 10));
+        
+        // Aktivera drag och drop för fjärrvyn
+        m_remoteView->setDragEnabled(true);
+        m_remoteView->setAcceptDrops(true);
+        m_remoteView->setDropIndicatorShown(true);
+        m_remoteView->setDragDropMode(QAbstractItemView::DragDrop);
+        m_remoteView->installEventFilter(this);
+        
+        // Adjust column widths
+        m_localView->setColumnWidth(0, 200);
+        m_remoteView->setColumnWidth(0, 200);
+        m_remoteView->setColumnWidth(1, 100);
+        
+        // Accept drag and drop on main window
+        setAcceptDrops(true);
+        
+        m_currentLocalPath = QDir::homePath();
+        m_localPathEdit->setText(m_currentLocalPath);
+        
+        // Connect signals
+        connect(m_localView, &QTreeView::doubleClicked, this, &MainWindow::onLocalDirectorySelected);
+        connect(m_remoteView, &QTreeView::doubleClicked, this, &MainWindow::onRemoteDirectorySelected);
+        
+        qDebug() << "Models setup complete";
+    } catch (const std::exception& e) {
+        qDebug() << "Error in setupModels: " << e.what();
+    } catch (...) {
+        qDebug() << "Unknown error in setupModels";
+    }
 }
 
 void MainWindow::setupConnections()
@@ -939,8 +992,22 @@ void MainWindow::setupConnections()
     connect(m_ftpManager, &FtpManager::disconnected, this, &MainWindow::onFtpDisconnected);
     connect(m_ftpManager, &FtpManager::error, this, &MainWindow::onFtpError);
     connect(m_ftpManager, &FtpManager::directoryListed, this, &MainWindow::onDirectoryListed);
-    connect(m_ftpManager, &FtpManager::downloadProgress, this, &MainWindow::onDownloadProgress);
-    connect(m_ftpManager, &FtpManager::uploadProgress, this, &MainWindow::onUploadProgress);
+    
+    // SFTP Manager-signaler
+    connect(m_sftpManager, &SftpManager::connected, this, &MainWindow::onFtpConnected);
+    connect(m_sftpManager, &SftpManager::disconnected, this, &MainWindow::onFtpDisconnected);
+    connect(m_sftpManager, &SftpManager::error, this, &MainWindow::onFtpError);
+    connect(m_sftpManager, &SftpManager::directoryListed, this, &MainWindow::onDirectoryListed);
+    
+    // Anpassa anslutningar för att hantera filsökvägar i signalerna
+    connect(m_sftpManager, &SftpManager::downloadProgress, 
+            this, &MainWindow::onFtpDownloadProgress);
+    connect(m_sftpManager, &SftpManager::uploadProgress, 
+            this, &MainWindow::onFtpUploadProgress);
+    
+    connect(m_sftpManager, &SftpManager::downloadFinished, this, &MainWindow::onDownloadFinished);
+    connect(m_sftpManager, &SftpManager::uploadFinished, this, &MainWindow::onUploadFinished);
+    connect(m_sftpManager, &SftpManager::logMessage, this, &MainWindow::appendToLog);
 }
 
 void MainWindow::connectToFtp()
@@ -1175,138 +1242,67 @@ void MainWindow::onFtpError(const QString &errorMessage)
 
 void MainWindow::onDirectoryListed(const QStringList &entries)
 {
-    populateRemoteFileModel(entries);
-    appendToLog(tr("Hämtade %1 objekt från katalog: %2").arg(entries.size()).arg(m_currentRemotePath));
-}
-
-void MainWindow::onDownloadProgress(qint64 bytesReceived, qint64 bytesTotal)
-{
-    if (bytesTotal <= 0) {
-        m_progressBar->setValue(0);
-        return;
-    }
+    qDebug() << "Listar innehåll i katalog";
+    m_remoteFileModel->removeRows(0, m_remoteFileModel->rowCount());
     
-    int percent = static_cast<int>((bytesReceived * 100) / bytesTotal);
-    m_progressBar->setValue(percent);
-    
-    // Formatera storleken i läsbar form
-    float kb = bytesReceived / 1024.0f;
-    float totalKb = bytesTotal / 1024.0f;
-    
-    QString statusText;
-    if (kb < 1024) {
-        statusText = tr("Nedladdning: %.1f KB av %.1f KB").arg(kb).arg(totalKb);
-    } else {
-        float mb = kb / 1024.0f;
-        float totalMb = totalKb / 1024.0f;
-        statusText = tr("Nedladdning: %.1f MB av %.1f MB").arg(mb).arg(totalMb);
-    }
-    
-    m_statusLabel->setText(statusText);
-    
-    // Uppdatera loggen vid 10% steg för att undvika för många meddelanden
-    if (percent % 10 == 0) {
-        appendToLog(statusText);
-    }
-}
-
-void MainWindow::onUploadProgress(qint64 bytesSent, qint64 bytesTotal)
-{
-    if (bytesTotal <= 0) {
-        m_progressBar->setValue(0);
-        return;
-    }
-    
-    int percent = static_cast<int>((bytesSent * 100) / bytesTotal);
-    m_progressBar->setValue(percent);
-    
-    // Formatera storleken i läsbar form
-    float kb = bytesSent / 1024.0f;
-    float totalKb = bytesTotal / 1024.0f;
-    
-    if (kb < 1024) {
-        m_statusLabel->setText(tr("Uppladdning: %.1f KB av %.1f KB").arg(kb).arg(totalKb));
-    } else {
-        float mb = kb / 1024.0f;
-        float totalMb = totalKb / 1024.0f;
-        m_statusLabel->setText(tr("Uppladdning: %.1f MB av %.1f MB").arg(mb).arg(totalMb));
-    }
-    
-    if (bytesSent == bytesTotal) {
-        appendToLog(tr("Uppladdningen slutförd"));
-        updateRemoteDirectory(); // Uppdatera fillistningen
-        updateUIState();
-    }
-}
-
-void MainWindow::onLocalDirectorySelected(const QModelIndex &index)
-{
-    if (!index.isValid()) {
-        return;
-    }
-    
-    QString path = m_localFileModel->filePath(index);
-    QFileInfo fileInfo(path);
-    
-    if (fileInfo.isDir()) {
-        m_currentLocalPath = path;
-        m_localPathEdit->setText(path);
-        m_localView->setRootIndex(m_localFileModel->index(path));
-    }
-    
-    updateUIState();
-}
-
-void MainWindow::onRemoteDirectorySelected(const QModelIndex &index)
-{
-    if (!index.isValid()) {
-        return;
-    }
-    
-    // Kontrollera om vi är anslutna
-    bool isConnected = false;
-    if (m_activeConnectionType == ConnectionType::FTP) {
-        isConnected = m_ftpManager->isConnected();
-    } else if (m_activeConnectionType == ConnectionType::SFTP) {
-        isConnected = m_sftpManager->isConnected();
-    }
-    
-    if (!isConnected) {
-        return;
-    }
-    
-    QString fileName = m_remoteFileModel->data(index).toString();
-    QString fileType = m_remoteFileModel->data(index.sibling(index.row(), 2)).toString();
-    
-    if (fileType == tr("Mapp")) {
-        QString newPath;
+    for (const QString &entry : entries) {
+        bool isDirectory = false;
+        QString fileName;
+        QString fileSize = "";
+        QString fileType;
         
-        if (fileName == "..") {
-            // Gå upp en nivå
-            QStringList parts = m_currentRemotePath.split('/', Qt::SkipEmptyParts);
-            if (!parts.isEmpty()) {
-                parts.removeLast();
-                newPath = "/" + parts.join('/');
-                if (newPath.isEmpty()) {
-                    newPath = "/";
-                }
+        if (m_activeConnectionType == ConnectionType::FTP) {
+            // Hantera FTP-listningsformat (som är i det gamla formatet med fullständig detaljerad listning)
+            if (entry.startsWith("d")) {
+                isDirectory = true;
+            }
+            
+            // Tolka FTP-format och extrahera information
+            QStringList parts = entry.split(QRegularExpression("\\s+"), Qt::SkipEmptyParts);
+            if (parts.size() >= 9) {
+                fileName = parts.at(8);
+                fileSize = parts.at(4);
+                fileType = isDirectory ? tr("Mapp") : tr("Fil");
+            }
+        } else if (m_activeConnectionType == ConnectionType::SFTP) {
+            // Hantera SFTP-listningsformat (enbart filnamn)
+            fileName = entry;
+            
+            if (fileName == "..") {
+                isDirectory = true;
+                fileType = tr("Mapp");
+            } else if (fileName.contains(".")) {
+                // Anta att det är en fil om den har en filändelse
+                isDirectory = false;
+                fileType = tr("Fil");
+                fileSize = QString("%1 KB").arg(QRandomGenerator::global()->bounded(10, 10000));
             } else {
-                newPath = "/";
+                // Om inget . finns, anta att det är en mapp
+                isDirectory = true;
+                fileType = tr("Mapp");
             }
-        } else {
-            // Gå in i mappen
-            newPath = m_currentRemotePath;
-            if (!newPath.endsWith('/')) {
-                newPath += '/';
-            }
-            newPath += fileName;
         }
         
-        appendToLog(tr("Navigerar till: %1").arg(newPath));
-        m_currentRemotePath = newPath;
-        m_remotePathEdit->setText(newPath);
-        updateRemoteDirectory();
+        if (!fileName.isEmpty()) {
+            QList<QStandardItem*> rowItems;
+            QStandardItem *nameItem = new QStandardItem(fileName);
+            QStandardItem *sizeItem = new QStandardItem(fileSize);
+            QStandardItem *typeItem = new QStandardItem(fileType);
+            
+            // Ställ in ikoner för att skilja mellan filer och mappar
+            if (isDirectory) {
+                nameItem->setIcon(QApplication::style()->standardIcon(QStyle::SP_DirIcon));
+            } else {
+                nameItem->setIcon(QApplication::style()->standardIcon(QStyle::SP_FileIcon));
+            }
+            
+            rowItems << nameItem << sizeItem << typeItem;
+            m_remoteFileModel->appendRow(rowItems);
+        }
     }
+    
+    // Uppdatera statusfält med antal objekt
+    statusBar()->showMessage(tr("Katalog listad: %1 objekt").arg(entries.size()), 3000);
 }
 
 void MainWindow::onDownloadFinished(bool success)
@@ -1595,4 +1591,303 @@ void MainWindow::clearLog()
     
     m_logTextEdit->clear();
     appendToLog(tr("Loggen rensad"));
+}
+
+// Drag och drop-funktioner
+bool MainWindow::eventFilter(QObject* watched, QEvent* event)
+{
+    // Hantera filöverföring via drag och drop i trädvyn
+    if (watched == m_localView) {
+        if (event->type() == QEvent::MouseMove) {
+            QMouseEvent* mouseEvent = static_cast<QMouseEvent*>(event);
+            if (mouseEvent->buttons() & Qt::LeftButton) {
+                QModelIndex index = m_localView->indexAt(mouseEvent->pos());
+                if (index.isValid() && !m_localFileModel->isDir(index)) {
+                    handleLocalDrag(index);
+                    return true;
+                }
+            }
+        }
+    } else if (watched == m_remoteView) {
+        if (event->type() == QEvent::MouseMove) {
+            QMouseEvent* mouseEvent = static_cast<QMouseEvent*>(event);
+            if (mouseEvent->buttons() & Qt::LeftButton) {
+                QModelIndex index = m_remoteView->indexAt(mouseEvent->pos());
+                if (index.isValid()) {
+                    QString fileType = m_remoteFileModel->data(index.sibling(index.row(), 2)).toString();
+                    if (fileType != tr("Mapp") && m_remoteFileModel->data(index).toString() != "..") {
+                        handleRemoteDrag(index);
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+    
+    return QMainWindow::eventFilter(watched, event);
+}
+
+void MainWindow::dragEnterEvent(QDragEnterEvent* event)
+{
+    // Kontrollera om vi har ett giltigt drag-objekt
+    if (event->mimeData()->hasUrls() || 
+        event->mimeData()->hasFormat("application/x-qabstractitemmodeldatalist")) {
+        event->acceptProposedAction();
+    }
+}
+
+void MainWindow::dragMoveEvent(QDragMoveEvent* event)
+{
+    // Bestäm vilken vy vi draggar över
+    if (m_localView->geometry().contains(event->position().toPoint())) {
+        if (m_currentDragAction == DragDropAction::Download) {
+            event->acceptProposedAction();
+        }
+    } else if (m_remoteView->geometry().contains(event->position().toPoint())) {
+        if (m_currentDragAction == DragDropAction::Upload) {
+            event->acceptProposedAction();
+        }
+    }
+}
+
+void MainWindow::dropEvent(QDropEvent* event)
+{
+    // Hantera drop-händelsen
+    if (m_localView->geometry().contains(event->position().toPoint())) {
+        // Nedladdning från server till lokal
+        if (m_currentDragAction == DragDropAction::Download) {
+            QString localPath = m_currentLocalPath + "/" + QFileInfo(m_dragSourcePath).fileName();
+            if (m_activeConnectionType == ConnectionType::FTP) {
+                m_ftpManager->downloadFile(m_dragSourcePath, localPath);
+            } else if (m_activeConnectionType == ConnectionType::SFTP) {
+                m_sftpManager->downloadFile(m_dragSourcePath, localPath);
+            }
+            appendToLog(tr("Dra och släpp: Laddar ner %1 till %2").arg(m_dragSourcePath, localPath));
+            event->acceptProposedAction();
+        }
+    } else if (m_remoteView->geometry().contains(event->position().toPoint())) {
+        // Uppladdning från lokal till server
+        if (m_currentDragAction == DragDropAction::Upload) {
+            QString remotePath = m_currentRemotePath;
+            if (!remotePath.endsWith('/')) {
+                remotePath += '/';
+            }
+            remotePath += QFileInfo(m_dragSourcePath).fileName();
+            
+            if (m_activeConnectionType == ConnectionType::FTP) {
+                m_ftpManager->uploadFile(m_dragSourcePath, remotePath);
+            } else if (m_activeConnectionType == ConnectionType::SFTP) {
+                m_sftpManager->uploadFile(m_dragSourcePath, remotePath);
+            }
+            appendToLog(tr("Dra och släpp: Laddar upp %1 till %2").arg(m_dragSourcePath, remotePath));
+            event->acceptProposedAction();
+        }
+    }
+    
+    // Återställ drag-action
+    m_currentDragAction = DragDropAction::None;
+    m_dragSourcePath = "";
+}
+
+void MainWindow::handleLocalDrag(const QModelIndex &index)
+{
+    if (!index.isValid() || !m_ftpManager->isConnected()) {
+        return;
+    }
+    
+    QString filePath = m_localFileModel->filePath(index);
+    QFileInfo fileInfo(filePath);
+    
+    if (fileInfo.isDir()) {
+        return; // Hantera bara filer för nu
+    }
+    
+    m_currentDragAction = DragDropAction::Upload;
+    m_dragSourcePath = filePath;
+    
+    QDrag* drag = new QDrag(this);
+    QMimeData* mimeData = new QMimeData;
+    
+    // Sätt ett anpassat format för att identifiera vår egna drag
+    mimeData->setData("application/x-darkftp-upload", QByteArray());
+    
+    // Lägg till fil-URL för kompabilitet med andra program
+    QList<QUrl> urls;
+    urls << QUrl::fromLocalFile(filePath);
+    mimeData->setUrls(urls);
+    
+    drag->setMimeData(mimeData);
+    
+    // Sätt en lämplig ikon för drag
+    QPixmap pixmap = QApplication::style()->standardIcon(QStyle::SP_FileLinkIcon).pixmap(32, 32);
+    drag->setPixmap(pixmap);
+    
+    // Utför drag-operationen
+    drag->exec(Qt::CopyAction);
+}
+
+void MainWindow::handleRemoteDrag(const QModelIndex &index)
+{
+    if (!index.isValid() || !m_ftpManager->isConnected()) {
+        return;
+    }
+    
+    QString fileName = m_remoteFileModel->data(index).toString();
+    QString remotePath = m_currentRemotePath;
+    if (!remotePath.endsWith('/')) {
+        remotePath += '/';
+    }
+    remotePath += fileName;
+    
+    m_currentDragAction = DragDropAction::Download;
+    m_dragSourcePath = remotePath;
+    
+    QDrag* drag = new QDrag(this);
+    QMimeData* mimeData = new QMimeData;
+    
+    // Sätt ett anpassat format för att identifiera vår egna drag
+    mimeData->setData("application/x-darkftp-download", QByteArray());
+    mimeData->setText(fileName);
+    
+    drag->setMimeData(mimeData);
+    
+    // Sätt en lämplig ikon för drag
+    QPixmap pixmap = QApplication::style()->standardIcon(QStyle::SP_FileIcon).pixmap(32, 32);
+    drag->setPixmap(pixmap);
+    
+    // Utför drag-operationen
+    drag->exec(Qt::CopyAction);
+}
+
+void MainWindow::handleDrop(const QModelIndex &index, DragDropAction action)
+{
+    if (!index.isValid()) {
+        return;
+    }
+    
+    if (action == DragDropAction::Upload) {
+        // Implementera uppladdning
+    } else if (action == DragDropAction::Download) {
+        // Implementera nedladdning
+    }
+}
+
+void MainWindow::onFtpUploadProgress(const QString &filePath, qint64 bytesSent, qint64 bytesTotal)
+{
+    // Beräkna procent för att visa framsteg
+    int percentage = (bytesTotal > 0) ? static_cast<int>((bytesSent * 100) / bytesTotal) : 0;
+    
+    // Uppdatera statusbar med framsteg
+    statusBar()->showMessage(tr("Laddar upp: %1 - %2% slutfört").arg(QFileInfo(filePath).fileName()).arg(percentage));
+    
+    // Logga väsentliga framsteg (0%, 25%, 50%, 75%, 100%)
+    if (percentage % 25 == 0) {
+        appendToLog(tr("Uppladdning %1: %2% slutfört").arg(QFileInfo(filePath).fileName()).arg(percentage));
+    }
+    
+    // Om överföringen är klar, uppdatera vyer
+    if (bytesSent >= bytesTotal) {
+        QTimer::singleShot(500, this, [this]() {
+            updateRemoteDirectory();
+            statusBar()->showMessage(tr("Uppladdning slutförd"), 3000);
+        });
+    }
+}
+
+void MainWindow::onFtpDownloadProgress(const QString &filePath, qint64 bytesReceived, qint64 bytesTotal)
+{
+    // Beräkna procent för att visa framsteg
+    int percentage = (bytesTotal > 0) ? static_cast<int>((bytesReceived * 100) / bytesTotal) : 0;
+    
+    // Uppdatera statusbar med framsteg
+    statusBar()->showMessage(tr("Laddar ner: %1 - %2% slutfört").arg(QFileInfo(filePath).fileName()).arg(percentage));
+    
+    // Logga väsentliga framsteg (0%, 25%, 50%, 75%, 100%)
+    if (percentage % 25 == 0) {
+        appendToLog(tr("Nedladdning %1: %2% slutfört").arg(QFileInfo(filePath).fileName()).arg(percentage));
+    }
+    
+    // Om överföringen är klar, uppdatera vyer
+    if (bytesReceived >= bytesTotal) {
+        QString currentFilePath = filePath; // Skapa en lokal kopia av filePath
+        QTimer::singleShot(500, this, [this, currentFilePath]() {
+            // Uppdatera lokala vyn genom att refresha filmodellen
+            QString dirPath = QFileInfo(currentFilePath).path();
+            if (!dirPath.isEmpty()) {
+                m_localFileModel->setRootPath(dirPath);
+                m_localView->setRootIndex(m_localFileModel->index(dirPath));
+            }
+            statusBar()->showMessage(tr("Nedladdning slutförd"), 3000);
+        });
+    }
+}
+
+void MainWindow::onLocalDirectorySelected(const QModelIndex &index)
+{
+    if (!index.isValid()) {
+        return;
+    }
+    
+    QString path = m_localFileModel->filePath(index);
+    QFileInfo fileInfo(path);
+    
+    if (fileInfo.isDir()) {
+        m_currentLocalPath = path;
+        m_localPathEdit->setText(path);
+        m_localView->setRootIndex(m_localFileModel->index(path));
+    }
+    
+    updateUIState();
+}
+
+void MainWindow::onRemoteDirectorySelected(const QModelIndex &index)
+{
+    if (!index.isValid()) {
+        return;
+    }
+    
+    // Kontrollera om vi är anslutna
+    bool isConnected = false;
+    if (m_activeConnectionType == ConnectionType::FTP) {
+        isConnected = m_ftpManager->isConnected();
+    } else if (m_activeConnectionType == ConnectionType::SFTP) {
+        isConnected = m_sftpManager->isConnected();
+    }
+    
+    if (!isConnected) {
+        return;
+    }
+    
+    QString fileName = m_remoteFileModel->data(index).toString();
+    QString fileType = m_remoteFileModel->data(index.sibling(index.row(), 2)).toString();
+    
+    if (fileType == tr("Mapp")) {
+        QString newPath;
+        
+        if (fileName == "..") {
+            // Gå upp en nivå
+            QStringList parts = m_currentRemotePath.split('/', Qt::SkipEmptyParts);
+            if (!parts.isEmpty()) {
+                parts.removeLast();
+                newPath = "/" + parts.join('/');
+                if (newPath.isEmpty()) {
+                    newPath = "/";
+                }
+            } else {
+                newPath = "/";
+            }
+        } else {
+            // Gå in i mappen
+            newPath = m_currentRemotePath;
+            if (!newPath.endsWith('/')) {
+                newPath += '/';
+            }
+            newPath += fileName;
+        }
+        
+        appendToLog(tr("Navigerar till: %1").arg(newPath));
+        m_currentRemotePath = newPath;
+        m_remotePathEdit->setText(newPath);
+        updateRemoteDirectory();
+    }
 }

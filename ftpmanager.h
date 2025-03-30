@@ -37,11 +37,11 @@ signals:
     void directoryListed(const QStringList &entries);
 
     void downloadStarted(const QString &filename);
-    void downloadProgress(qint64 bytesReceived, qint64 bytesTotal);
+    void downloadProgress(const QString &filePath, qint64 bytesReceived, qint64 bytesTotal);
     void downloadFinished(bool success);
 
     void uploadStarted(const QString &filename);
-    void uploadProgress(qint64 bytesSent, qint64 bytesTotal);
+    void uploadProgress(const QString &filePath, qint64 bytesSent, qint64 bytesTotal);
     void uploadFinished(bool success);
 
 private:

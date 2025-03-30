@@ -221,7 +221,7 @@ void SftpManager::updateTransferProgress()
     
     // Emittera framstegssignal beroende på överföringstyp
     if (m_isDownload) {
-        emit downloadProgress(m_processedBytes, m_totalBytes);
+        emit downloadProgress(m_currentLocalPath, m_processedBytes, m_totalBytes);
         
         // För nedladdningar, skriv slumpmässiga data till filen
         if (m_currentFile) {
@@ -233,7 +233,7 @@ void SftpManager::updateTransferProgress()
             m_currentFile->write(randomData);
         }
     } else {
-        emit uploadProgress(m_processedBytes, m_totalBytes);
+        emit uploadProgress(m_currentRemotePath, m_processedBytes, m_totalBytes);
         // För uppladdningar behöver vi inte göra något med filen
     }
 }
@@ -276,26 +276,70 @@ QStringList SftpManager::generateRandomDirListing(const QString &path)
 {
     QStringList entries;
     
-    // Skapa några standardmappar för alla kataloger
-    entries.append("d---------   2 user     group            0 Jan 01 2023 uploads");
-    entries.append("d---------   2 user     group            0 Jan 01 2023 downloads");
-    entries.append("d---------   2 user     group            0 Jan 01 2023 public");
-    entries.append("d---------   2 user     group            0 Jan 01 2023 private");
+    // Lägg alltid till en indikator för överliggande katalog, förutom i roten
+    if (path != "/") {
+        entries.append("..");
+    }
     
-    // Skapa några filer
-    entries.append("----------   1 user     group     10240 Jan 01 2023 welcome.txt");
-    entries.append("----------   1 user     group    102400 Jan 01 2023 readme.pdf");
-    entries.append("----------   1 user     group   1024000 Jan 01 2023 example.zip");
-    
-    // Lägg till några specifika mappar för root
+    // Standardkataloger som ska finnas i roten
     if (path == "/") {
-        entries.append("d---------   2 user     group            0 Jan 01 2023 home");
-        entries.append("d---------   2 user     group            0 Jan 01 2023 var");
-        entries.append("d---------   2 user     group            0 Jan 01 2023 etc");
-    } 
-    // Lägg till "upp en nivå" om vi inte är i roten
-    else if (path != "/") {
-        entries.prepend("d---------   2 user     group            0 Jan 01 2023 ..");
+        entries.append("public");
+        entries.append("private");
+        entries.append("uploads");
+        entries.append("downloads");
+        entries.append("docs");
+        entries.append("welcome.txt");
+        entries.append("readme.pdf");
+        entries.append("example.zip");
+    }
+    // Innehåll i "public"-katalogen
+    else if (path == "/public") {
+        entries.append("shared_data.csv");
+        entries.append("public_info.txt");
+        entries.append("gallery");
+        entries.append("documents");
+    }
+    // Innehåll i "private"-katalogen
+    else if (path == "/private") {
+        entries.append("personal");
+        entries.append("work");
+        entries.append("notes.txt");
+        entries.append("todo.txt");
+        entries.append("important.docx");
+    }
+    // Innehåll i "uploads"-katalogen
+    else if (path == "/uploads") {
+        entries.append("images");
+        entries.append("videos");
+        entries.append("documents");
+        entries.append("temp");
+    }
+    // Innehåll i "downloads"-katalogen
+    else if (path == "/downloads") {
+        entries.append("software");
+        entries.append("media");
+        entries.append("archives");
+        entries.append("sample_download.zip");
+    }
+    // Standardinnehåll för andra kataloger
+    else {
+        // Generera några slumpmässiga filer och mappar
+        int numEntries = QRandomGenerator::global()->bounded(5, 15);
+        
+        for (int i = 0; i < numEntries; ++i) {
+            if (QRandomGenerator::global()->bounded(2) == 0) {
+                // Mapp
+                QString folderName = QString("folder_%1").arg(QRandomGenerator::global()->bounded(1000));
+                entries.append(folderName);
+            } else {
+                // Fil
+                static const QStringList extensions = {".txt", ".pdf", ".docx", ".jpg", ".png", ".zip", ".mp3", ".mp4"};
+                QString fileName = QString("file_%1%2")
+                    .arg(QRandomGenerator::global()->bounded(1000))
+                    .arg(extensions.at(QRandomGenerator::global()->bounded(extensions.size())));
+                entries.append(fileName);
+            }
+        }
     }
     
     return entries;
