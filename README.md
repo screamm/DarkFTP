@@ -2,97 +2,92 @@
 
 ![DarkFTP Logo](path/to/logo.png)
 
-En modern, elegant och användarvänlig FTP/SFTP-klient med fokus på design och användbarhet.
+A modern, elegant and user-friendly FTP/SFTP client focused on design and usability.
 
-## Skärmdump
+## Screenshot
 
 ![DarkFTP Screenshot](DarkFTP_main_view.png)
 
-## Funktioner
+## Features
 
-- **Dual-pane gränssnitt** - Överför filer enkelt mellan lokal och fjärrserver
-- **Drag-and-drop** - Dra filer för att överföra dem mellan lokal dator och fjärrserver
-- **Stöd för både FTP och SFTP** - Anslut med standard FTP eller säker SFTP
-- **Visuell överföringsindikator** - Se tydligt överföringsframsteg
-- **Flera anpassningsbara teman** - Välj mellan Dark, Retro Blue, Steampunk och Hacker theme
-- **Sparade anslutningar** - Spara dina anslutningar för snabb åtkomst
-- **Detaljerad loggning** - Se exakt vad som händer med dina överföringar
+- **Dual-pane Interface** - Easily transfer files between local and remote servers
+- **Drag-and-drop Support** - Intuitive file transfers between local computer and remote server
+- **FTP & SFTP Support** - Connect via standard FTP or secure SFTP protocols
+- **Visual Transfer Indicators** - Clear progress visualization for all file operations
+- **Customizable Themes** - Choose between Dark, Retro Blue, Steampunk, and Hacker themes
+- **Connection Management** - Store and organize connection profiles for quick access
+- **Detailed Logging** - Comprehensive activity tracking for all transfers and operations
 
 ## Installation
 
 ### Windows
-1. Ladda ner senaste versionen från [Releases](https://github.com/yourusername/DarkFTP/releases)
-2. Extrahera alla filer i ZIP-arkivet
-3. Kör `DarkFTP.exe`
+1. Download the latest release from [Releases](https://github.com/screamm/DarkFTP/releases)
+2. Extract all files from the ZIP archive
+3. Run `DarkFTP.exe`
 
 ### macOS
-1. Ladda ner senaste versionen från [Releases](https://github.com/yourusername/DarkFTP/releases)
-2. Montera .dmg-filen
-3. Dra DarkFTP till din Applications-mapp
+1. Download the latest release from [Releases](https://github.com/screamm/DarkFTP/releases)
+2. Mount the .dmg file
+3. Drag DarkFTP to your Applications folder
 
-### Från källkod
-För att bygga från källkod behöver du:
-1. Qt 6.8.3 eller senare
-2. CMake 3.16 eller senare
-3. C++17-kompatibel kompilator
+### From Source
+Requirements:
+1. Qt 6.8.3 or later
+2. CMake 3.16 or later
+3. C++17-compatible compiler
 
 ```bash
-# Klona repo
-git clone https://github.com/yourusername/DarkFTP.git
+# Clone repository
+git clone https://github.com/screamm/DarkFTP.git
 cd DarkFTP
 
-# Konfigurera och bygg
+# Configure and build
 mkdir build && cd build
 cmake ..
 cmake --build . --config Release
 
-# Distribuera (Windows)
+# Deploy (Windows)
 windeployqt DarkFTP.exe
 
-# Distribuera (macOS)
+# Deploy (macOS)
 macdeployqt DarkFTP.app
 ```
 
-## Användning
+## Usage
 
-### Ansluta till en server
-1. Klicka på "Anslut..." eller använd `Ctrl+N`
-2. Ange serverinformation:
-   - Serveradress (t.ex. ftp.example.com)
-   - Användarnamn
-   - Lösenord
-   - Port (standard: 21 för FTP, 22 för SFTP)
-   - Välj anslutningstyp (FTP/SFTP)
-3. Klicka på "Anslut"
+### Connecting to a Server
+1. Click "Connect..." or use `Ctrl+N`
+2. Enter server information:
+   - Server address (e.g., ftp.example.com)
+   - Username
+   - Password
+   - Port (default: 21 for FTP, 22 for SFTP)
+   - Select connection type (FTP/SFTP)
+3. Click "Connect"
 
-### Överföra filer
-- **Drag and drop**: Dra filer mellan lokal och fjärrpanel
-- **Knappar**: Välj fil och klicka på "Ladda upp" eller "Ladda ner"
-- **Kontextmeny**: Högerklicka på en fil för överföringsalternativ
+### Transferring Files
+- **Drag and drop**: Drag files between local and remote panels
+- **Buttons**: Select a file and click "Upload" or "Download"
+- **Context menu**: Right-click on a file for transfer options
 
-### Byta tema
-1. Gå till "Visa" > "Tema"
-2. Välj bland tillgängliga teman
+### Changing Themes
+1. Go to "View" > "Theme"
+2. Select from available themes
 
-## Teknisk information
+## Technical Details
 
-DarkFTP är byggd med följande teknologier:
-- Qt 6.8.3 - GUI-ramverk
-- C++17 - Programmeringsspråk
-- CMake - Bygghantering
+DarkFTP is built with:
+- Qt 6.8.3 - GUI framework
+- C++17 - Programming language
+- CMake - Build system
 
-## Bidrag
+## Contributing
 
-Bidrag är välkomna! Se [CONTRIBUTING.md](CONTRIBUTING.md) för mer information.
+Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for details.
 
-## Licens
+## License
 
-Detta projekt är licensierat under MIT-licensen - se [LICENSE](LICENSE) för detaljer.
+This project is licensed under the MIT License - see [LICENSE](LICENSE) file for details.
 
-## Utvecklare
 
-David Johansson - [GitHub](https://github.com/yourusername) - email@example.com
 
----
-
-*DarkFTP är ett projekt som skapats som en del av kursprojekt FSU23D, 2025.* 
