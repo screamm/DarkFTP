@@ -138,7 +138,7 @@ private:
     QLineEdit *m_passwordInput;
     QLineEdit *m_portInput;
     QComboBox *m_connectionTypeCombo;
-    QListWidget *m_savedConnectionsList;
+    QListWidget *m_savedConnectionsList = nullptr;
     QPushButton *m_connectButton;
     QPushButton *m_disconnectButton;
     

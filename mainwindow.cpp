@@ -17,6 +17,9 @@
 #include <QTabWidget>
 #include <QDateTime>
 #include <QActionGroup>
+#include <QScreen>
+#include <QCheckBox>
+#include <QDebug>
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -31,64 +34,76 @@ MainWindow::MainWindow(QWidget *parent)
     , m_connectButton(nullptr)
     , m_disconnectButton(nullptr)
     , m_savedConnectionsList(nullptr)
+    , m_localView(nullptr)
+    , m_remoteView(nullptr)
+    , m_localPathEdit(nullptr)
+    , m_remotePathEdit(nullptr)
+    , m_uploadButton(nullptr)
+    , m_downloadButton(nullptr)
+    , m_progressBar(nullptr)
+    , m_statusLabel(nullptr)
+    , m_logTextEdit(nullptr)
+    , m_themeComboBox(nullptr)
+    , m_connectionDialog(nullptr)
+    , m_serverInput(nullptr)
+    , m_usernameInput(nullptr)
+    , m_passwordInput(nullptr)
+    , m_portInput(nullptr)
+    , m_connectionTypeCombo(nullptr)
 {
-    ui->setupUi(this);
-    setWindowTitle("DarkFTP");
-    resize(1024, 768);
+    qDebug() << "MainWindow constructor started";
     
-    // Skapa anslutningsdialog först
-    setupConnectionDialog();
-    
-    // Ta bort initialisering av knappar som inte används i någon layout
-    m_savedConnectionsList = new QListWidget(this);
-    
-    // Ladda inställningar och anslutningar
-    loadSettings();
-    
-    setupUi();
-    setupModels();
-    setupConnections();
-    
-    // Anslut menyknappar till respektive funktioner
-    connect(ui->actionConnect, &QAction::triggered, this, &MainWindow::showConnectionDialog);
-    connect(ui->actionDisconnect, &QAction::triggered, this, &MainWindow::disconnectFromFtp);
-    connect(ui->actionExit, &QAction::triggered, this, &QApplication::quit);
-    connect(ui->actionAbout, &QAction::triggered, this, [this]() {
-        QMessageBox::about(this, tr("Om DarkFTP"),
-                          tr("DarkFTP är en modern FTP-klient med mörkt tema.\n\n"
-                             "Skapad med Qt %1\n"
-                             "Version: 0.1").arg(QT_VERSION_STR));
-    });
-    
-    // FTP Manager-signaler
-    connect(m_ftpManager, &FtpManager::error, this, &MainWindow::onFtpError);
-    connect(m_ftpManager, &FtpManager::connected, this, &MainWindow::onFtpConnected);
-    connect(m_ftpManager, &FtpManager::disconnected, this, &MainWindow::onFtpDisconnected);
-    connect(m_ftpManager, &FtpManager::directoryListed, this, &MainWindow::onDirectoryListed);
-    connect(m_ftpManager, &FtpManager::downloadProgress, this, &MainWindow::onDownloadProgress);
-    connect(m_ftpManager, &FtpManager::uploadProgress, this, &MainWindow::onUploadProgress);
-    connect(m_ftpManager, &FtpManager::downloadFinished, this, &MainWindow::onDownloadFinished);
-    connect(m_ftpManager, &FtpManager::uploadFinished, this, &MainWindow::onUploadFinished);
-    
-    // SFTP Manager-signaler
-    connect(m_sftpManager, &SftpManager::error, this, &MainWindow::onFtpError);
-    connect(m_sftpManager, &SftpManager::connected, this, &MainWindow::onFtpConnected);
-    connect(m_sftpManager, &SftpManager::disconnected, this, &MainWindow::onFtpDisconnected);
-    connect(m_sftpManager, &SftpManager::directoryListed, this, &MainWindow::onDirectoryListed);
-    connect(m_sftpManager, &SftpManager::downloadProgress, this, &MainWindow::onDownloadProgress);
-    connect(m_sftpManager, &SftpManager::uploadProgress, this, &MainWindow::onUploadProgress);
-    connect(m_sftpManager, &SftpManager::downloadFinished, this, &MainWindow::onDownloadFinished);
-    connect(m_sftpManager, &SftpManager::uploadFinished, this, &MainWindow::onUploadFinished);
-    connect(m_sftpManager, &SftpManager::logMessage, this, &MainWindow::appendToLog);
-    
-    // Sätt standardtema
-    setTheme(AppTheme::DarkTermius);
-    
-    // Logga uppstart
-    appendToLog(tr("DarkFTP startad - redo att ansluta"));
-    
-    updateUIState();
-    updateConnectionsList();
+    try {
+        ui->setupUi(this);
+        setWindowTitle("DarkFTP");
+        resize(1024, 768);
+        
+        // Skapa anslutningsdialog först
+        setupConnectionDialog();
+        
+        // Ladda inställningar och anslutningar
+        loadSettings();
+        
+        setupUi();
+        setupModels();
+        setupConnections();
+        
+        // FTP Manager-signaler
+        connect(m_ftpManager, &FtpManager::error, this, &MainWindow::onFtpError);
+        connect(m_ftpManager, &FtpManager::connected, this, &MainWindow::onFtpConnected);
+        connect(m_ftpManager, &FtpManager::disconnected, this, &MainWindow::onFtpDisconnected);
+        connect(m_ftpManager, &FtpManager::directoryListed, this, &MainWindow::onDirectoryListed);
+        connect(m_ftpManager, &FtpManager::downloadProgress, this, &MainWindow::onDownloadProgress);
+        connect(m_ftpManager, &FtpManager::uploadProgress, this, &MainWindow::onUploadProgress);
+        connect(m_ftpManager, &FtpManager::downloadFinished, this, &MainWindow::onDownloadFinished);
+        connect(m_ftpManager, &FtpManager::uploadFinished, this, &MainWindow::onUploadFinished);
+        
+        // SFTP Manager-signaler
+        connect(m_sftpManager, &SftpManager::error, this, &MainWindow::onFtpError);
+        connect(m_sftpManager, &SftpManager::connected, this, &MainWindow::onFtpConnected);
+        connect(m_sftpManager, &SftpManager::disconnected, this, &MainWindow::onFtpDisconnected);
+        connect(m_sftpManager, &SftpManager::directoryListed, this, &MainWindow::onDirectoryListed);
+        connect(m_sftpManager, &SftpManager::downloadProgress, this, &MainWindow::onDownloadProgress);
+        connect(m_sftpManager, &SftpManager::uploadProgress, this, &MainWindow::onUploadProgress);
+        connect(m_sftpManager, &SftpManager::downloadFinished, this, &MainWindow::onDownloadFinished);
+        connect(m_sftpManager, &SftpManager::uploadFinished, this, &MainWindow::onUploadFinished);
+        connect(m_sftpManager, &SftpManager::logMessage, this, &MainWindow::appendToLog);
+        
+        // Sätt standardtema
+        setTheme(AppTheme::DarkTermius);
+        
+        // Logga uppstart
+        appendToLog(tr("DarkFTP startad - redo att ansluta"));
+        
+        updateUIState();
+        updateConnectionsList();
+        
+        qDebug() << "MainWindow constructor completed successfully";
+    } catch (const std::exception& e) {
+        qDebug() << "Exception in MainWindow constructor: " << e.what();
+    } catch (...) {
+        qDebug() << "Unknown exception in MainWindow constructor";
+    }
 }
 
 MainWindow::~MainWindow()
@@ -322,6 +337,8 @@ void MainWindow::saveSettings()
 
 void MainWindow::setupUi()
 {
+    qDebug() << "Setting up UI";
+    
     // Skapa huvud-splitter och layouter
     QSplitter *mainSplitter = new QSplitter(Qt::Vertical, this);
     QSplitter *fileSplitter = new QSplitter(Qt::Horizontal, this);
@@ -331,29 +348,45 @@ void MainWindow::setupUi()
     QVBoxLayout *localLayout = new QVBoxLayout(localContainer);
     m_localView = new QTreeView();
     m_localPathEdit = new QLineEdit();
-    QPushButton *browseButton = new QPushButton(tr("Bläddra..."));
+    QPushButton *browseButton = new QPushButton(QApplication::style()->standardIcon(QStyle::SP_DirOpenIcon), tr("Bläddra..."));
     QHBoxLayout *localPathLayout = new QHBoxLayout();
+    
+    QLabel *homeIconLabel = new QLabel();
+    homeIconLabel->setPixmap(QApplication::style()->standardIcon(QStyle::SP_DirHomeIcon).pixmap(16, 16));
+    localPathLayout->addWidget(homeIconLabel);
+    
     localPathLayout->addWidget(m_localPathEdit);
     localPathLayout->addWidget(browseButton);
     QLabel *localLabel = new QLabel(tr("Lokala filer"));
-    localLabel->setStyleSheet("font-weight: bold;");
+    localLabel->setStyleSheet("font-weight: bold; font-size: 11pt; padding: 4px;");
     localLayout->addWidget(localLabel);
     localLayout->addLayout(localPathLayout);
     localLayout->addWidget(m_localView);
+    
+    // Rundade hörn för lokala fil-containern
+    localContainer->setStyleSheet("background-color: rgba(40, 40, 40, 50); border-radius: 8px; margin: 2px;");
     
     QWidget *remoteContainer = new QWidget();
     QVBoxLayout *remoteLayout = new QVBoxLayout(remoteContainer);
     m_remoteView = new QTreeView();
     m_remotePathEdit = new QLineEdit();
-    QPushButton *goButton = new QPushButton(tr("Gå"));
+    QPushButton *goButton = new QPushButton(QApplication::style()->standardIcon(QStyle::SP_DialogOkButton), tr("Gå"));
     QHBoxLayout *remotePathLayout = new QHBoxLayout();
+    
+    QLabel *netIconLabel = new QLabel();
+    netIconLabel->setPixmap(QApplication::style()->standardIcon(QStyle::SP_DriveNetIcon).pixmap(16, 16));
+    remotePathLayout->addWidget(netIconLabel);
+    
     remotePathLayout->addWidget(m_remotePathEdit);
     remotePathLayout->addWidget(goButton);
     QLabel *remoteLabel = new QLabel(tr("Fjärrfiler"));
-    remoteLabel->setStyleSheet("font-weight: bold;");
+    remoteLabel->setStyleSheet("font-weight: bold; font-size: 11pt; padding: 4px;");
     remoteLayout->addWidget(remoteLabel);
     remoteLayout->addLayout(remotePathLayout);
     remoteLayout->addWidget(m_remoteView);
+    
+    // Rundade hörn för fjärr-containern
+    remoteContainer->setStyleSheet("background-color: rgba(40, 40, 40, 50); border-radius: 8px; margin: 2px;");
     
     fileSplitter->addWidget(localContainer);
     fileSplitter->addWidget(remoteContainer);
@@ -369,11 +402,11 @@ void MainWindow::setupUi()
     m_progressBar->setValue(0);
     m_statusLabel = new QLabel(tr("Redo"));
     
-    // Lägg till kontrollknappar
+    // Lägg till kontrollknappar med ikoner
     QHBoxLayout *buttonLayout = new QHBoxLayout();
-    m_uploadButton = new QPushButton(tr("Ladda upp"));
-    m_downloadButton = new QPushButton(tr("Ladda ner"));
-    QPushButton *refreshButton = new QPushButton(tr("Uppdatera"));
+    m_uploadButton = new QPushButton(QApplication::style()->standardIcon(QStyle::SP_ArrowUp), tr("Ladda upp"));
+    m_downloadButton = new QPushButton(QApplication::style()->standardIcon(QStyle::SP_ArrowDown), tr("Ladda ner"));
+    QPushButton *refreshButton = new QPushButton(QApplication::style()->standardIcon(QStyle::SP_BrowserReload), tr("Uppdatera"));
     buttonLayout->addWidget(m_uploadButton);
     buttonLayout->addWidget(m_downloadButton);
     buttonLayout->addWidget(refreshButton);
@@ -388,10 +421,13 @@ void MainWindow::setupUi()
     QVBoxLayout *logLayout = new QVBoxLayout(logContainer);
     m_logTextEdit = new QTextEdit();
     m_logTextEdit->setReadOnly(true);
-    QPushButton *clearLogButton = new QPushButton(tr("Rensa logg"));
+    // Ge loggfönstret ett monospace-typsnitt
+    QFont logFont("Courier New", 9);
+    m_logTextEdit->setFont(logFont);
+    QPushButton *clearLogButton = new QPushButton(QApplication::style()->standardIcon(QStyle::SP_DialogDiscardButton), tr("Rensa logg"));
     
     QLabel *logLabel = new QLabel(tr("Aktivitetslogg"));
-    logLabel->setStyleSheet("font-weight: bold;");
+    logLabel->setStyleSheet("font-weight: bold; font-size: 11pt; padding: 4px;");
     
     QHBoxLayout *logControlLayout = new QHBoxLayout();
     logControlLayout->addWidget(logLabel);
@@ -416,8 +452,8 @@ void MainWindow::setupUi()
     
     // Lägg till en tab-widget för transferinfo och logg
     QTabWidget *bottomTabWidget = new QTabWidget();
-    bottomTabWidget->addTab(transferWidget, tr("Överföringar"));
-    bottomTabWidget->addTab(logContainer, tr("Loggfönster"));
+    bottomTabWidget->addTab(transferWidget, QApplication::style()->standardIcon(QStyle::SP_FileDialogContentsView), tr("Överföringar"));
+    bottomTabWidget->addTab(logContainer, QApplication::style()->standardIcon(QStyle::SP_FileDialogInfoView), tr("Loggfönster"));
     
     mainSplitter->addWidget(bottomTabWidget);
     mainSplitter->setStretchFactor(0, 3);
@@ -431,39 +467,112 @@ void MainWindow::setupUi()
     
     // Skapa menyer och verktygsfält
     createMenus();
+    
+    // Ställ in fönsterstorlek och position
+    setMinimumSize(900, 600);
+    resize(1200, 800);
+    
+    // För att centrera fönstret på skärmen
+    setGeometry(
+        QStyle::alignedRect(
+            Qt::LeftToRight,
+            Qt::AlignCenter,
+            size(),
+            QGuiApplication::primaryScreen()->availableGeometry()
+        )
+    );
 }
 
 void MainWindow::setupConnectionDialog()
 {
     m_connectionDialog = new QDialog(this);
     m_connectionDialog->setWindowTitle(tr("Anslut till server"));
-    m_connectionDialog->setMinimumWidth(400);
+    m_connectionDialog->setMinimumWidth(500);
+    m_connectionDialog->setWindowIcon(QApplication::style()->standardIcon(QStyle::SP_DriveNetIcon));
     
     QVBoxLayout *layout = new QVBoxLayout(m_connectionDialog);
     
-    QFormLayout *formLayout = new QFormLayout();
+    // Header med titel och ikon
+    QHBoxLayout *headerLayout = new QHBoxLayout();
+    QLabel *iconLabel = new QLabel();
+    iconLabel->setPixmap(QApplication::style()->standardIcon(QStyle::SP_DriveNetIcon).pixmap(32, 32));
+    QLabel *titleLabel = new QLabel(tr("Anslut till FTP/SFTP-server"));
+    titleLabel->setStyleSheet("font-size: 16px; font-weight: bold; color: #4A86E8;");
+    headerLayout->addWidget(iconLabel);
+    headerLayout->addWidget(titleLabel);
+    headerLayout->addStretch();
+    layout->addLayout(headerLayout);
     
+    // Separator
+    QFrame *separator = new QFrame();
+    separator->setFrameShape(QFrame::HLine);
+    separator->setFrameShadow(QFrame::Sunken);
+    layout->addWidget(separator);
+    layout->addSpacing(10);
+    
+    QFormLayout *formLayout = new QFormLayout();
+    formLayout->setSpacing(10);
+    formLayout->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
+    
+    // Server med ikon
+    QHBoxLayout *serverLayout = new QHBoxLayout();
+    QLabel *serverIconLabel = new QLabel();
+    serverIconLabel->setPixmap(QApplication::style()->standardIcon(QStyle::SP_ComputerIcon).pixmap(16, 16));
     m_serverInput = new QLineEdit(m_connectionDialog);
     m_serverInput->setPlaceholderText("ftp.example.com");
-    formLayout->addRow(tr("Server:"), m_serverInput);
+    serverLayout->addWidget(serverIconLabel);
+    serverLayout->addWidget(m_serverInput);
+    formLayout->addRow(tr("Server:"), serverLayout);
     
+    // Användarnamn med ikon
+    QHBoxLayout *userLayout = new QHBoxLayout();
+    QLabel *userIconLabel = new QLabel();
+    userIconLabel->setPixmap(QApplication::style()->standardIcon(QStyle::SP_DialogApplyButton).pixmap(16, 16));
     m_usernameInput = new QLineEdit(m_connectionDialog);
     m_usernameInput->setPlaceholderText(tr("Användarnamn"));
-    formLayout->addRow(tr("Användarnamn:"), m_usernameInput);
+    userLayout->addWidget(userIconLabel);
+    userLayout->addWidget(m_usernameInput);
+    formLayout->addRow(tr("Användarnamn:"), userLayout);
     
+    // Lösenord med ikon
+    QHBoxLayout *passLayout = new QHBoxLayout();
+    QLabel *passIconLabel = new QLabel();
+    passIconLabel->setPixmap(QApplication::style()->standardIcon(QStyle::SP_DialogNoButton).pixmap(16, 16));
     m_passwordInput = new QLineEdit(m_connectionDialog);
     m_passwordInput->setPlaceholderText(tr("Lösenord"));
     m_passwordInput->setEchoMode(QLineEdit::Password);
-    formLayout->addRow(tr("Lösenord:"), m_passwordInput);
+    passLayout->addWidget(passIconLabel);
+    passLayout->addWidget(m_passwordInput);
+    formLayout->addRow(tr("Lösenord:"), passLayout);
     
+    // Port med ikon
+    QHBoxLayout *portLayout = new QHBoxLayout();
+    QLabel *portIconLabel = new QLabel();
+    portIconLabel->setPixmap(QApplication::style()->standardIcon(QStyle::SP_MediaPlay).pixmap(16, 16));
     m_portInput = new QLineEdit(m_connectionDialog);
     m_portInput->setPlaceholderText("21");
-    formLayout->addRow(tr("Port:"), m_portInput);
+    // Begränsa inmatningen till siffror
+    QIntValidator *validator = new QIntValidator(1, 65535, m_connectionDialog);
+    m_portInput->setValidator(validator);
+    portLayout->addWidget(portIconLabel);
+    portLayout->addWidget(m_portInput);
+    formLayout->addRow(tr("Port:"), portLayout);
     
+    // Anslutningstyp med ikon
+    QHBoxLayout *typeLayout = new QHBoxLayout();
+    QLabel *typeIconLabel = new QLabel();
+    typeIconLabel->setPixmap(QApplication::style()->standardIcon(QStyle::SP_FileDialogListView).pixmap(16, 16));
     m_connectionTypeCombo = new QComboBox(m_connectionDialog);
     m_connectionTypeCombo->addItem("FTP");
     m_connectionTypeCombo->addItem("SFTP");
-    formLayout->addRow(tr("Anslutningstyp:"), m_connectionTypeCombo);
+    typeLayout->addWidget(typeIconLabel);
+    typeLayout->addWidget(m_connectionTypeCombo);
+    formLayout->addRow(tr("Anslutningstyp:"), typeLayout);
+    
+    // Lägg till lite extra avstånd för bättre utseende
+    formLayout->setRowWrapPolicy(QFormLayout::WrapAllRows);
+    
+    layout->addLayout(formLayout);
     
     // Uppdatera port när anslutningstyp ändras
     connect(m_connectionTypeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int index) {
@@ -474,22 +583,45 @@ void MainWindow::setupConnectionDialog()
         }
     });
     
-    layout->addLayout(formLayout);
+    // Spara anslutning checkbox
+    QCheckBox *saveConnectionCheckBox = new QCheckBox(tr("Spara anslutning för framtida användning"));
+    layout->addWidget(saveConnectionCheckBox);
     
-    QDialogButtonBox *buttonBox = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
-    connect(buttonBox, &QDialogButtonBox::accepted, m_connectionDialog, &QDialog::accept);
-    connect(buttonBox, &QDialogButtonBox::rejected, m_connectionDialog, &QDialog::reject);
+    // Lite mellanrum före knapparna
+    layout->addSpacing(20);
+    
+    // Knappar med stöd för att spara anslutning
+    QDialogButtonBox *buttonBox = new QDialogButtonBox(QDialogButtonBox::Cancel);
     
     // Använd redan skapad m_connectButton eller skapa en ny om den inte finns
     if (!m_connectButton) {
-        m_connectButton = new QPushButton(tr("Anslut"), m_connectionDialog);
+        m_connectButton = new QPushButton(QApplication::style()->standardIcon(QStyle::SP_CommandLink), tr("Anslut"), m_connectionDialog);
+        m_connectButton->setStyleSheet("padding: 6px 12px;");
     }
     buttonBox->addButton(m_connectButton, QDialogButtonBox::AcceptRole);
+    
+    QPushButton *cancelButton = buttonBox->button(QDialogButtonBox::Cancel);
+    cancelButton->setIcon(QApplication::style()->standardIcon(QStyle::SP_DialogCancelButton));
+    cancelButton->setText(tr("Avbryt"));
+    cancelButton->setStyleSheet("padding: 6px 12px;");
     
     layout->addWidget(buttonBox);
     
     // Anslut knapparna
-    connect(m_connectionDialog, &QDialog::accepted, this, &MainWindow::connectToFtp);
+    connect(buttonBox, &QDialogButtonBox::accepted, m_connectionDialog, &QDialog::accept);
+    connect(buttonBox, &QDialogButtonBox::rejected, m_connectionDialog, &QDialog::reject);
+    connect(m_connectionDialog, &QDialog::accepted, [this, saveConnectionCheckBox]() {
+        // Spara anslutningen om checkboxen är markerad
+        if (saveConnectionCheckBox->isChecked()) {
+            saveConnection();
+        }
+        connectToFtp();
+    });
+    
+    // Sätt fokus på serverinmatning när dialogen öppnas
+    connect(m_connectionDialog, &QDialog::finished, [this](int) {
+        m_serverInput->setFocus();
+    });
 }
 
 void MainWindow::showConnectionDialog()
@@ -509,7 +641,9 @@ void MainWindow::showConnectionDialog()
 
 void MainWindow::updateConnectionsList()
 {
+    // Kontrollera om m_savedConnectionsList är initierat
     if (!m_savedConnectionsList) {
+        // Vi fortsätter utan att göra något, det är inte kritiskt
         return;
     }
     
@@ -571,34 +705,93 @@ void MainWindow::showSavedConnectionsDialog()
 {
     QDialog dialog(this);
     dialog.setWindowTitle(tr("Hantera sparade anslutningar"));
-    dialog.setMinimumWidth(500);
-    dialog.setMinimumHeight(400);
+    dialog.setMinimumWidth(600);
+    dialog.setMinimumHeight(450);
     
     QVBoxLayout *layout = new QVBoxLayout(&dialog);
     
+    // Titelrad med stilisering
+    QLabel *titleLabel = new QLabel(tr("Sparade anslutningar"));
+    titleLabel->setStyleSheet("font-size: 16px; font-weight: bold; color: #4A86E8; padding: 10px 0;");
+    layout->addWidget(titleLabel);
+    
     // Skapa listwidget för att visa sparade anslutningar
     QListWidget *connectionsList = new QListWidget(&dialog);
+    connectionsList->setAlternatingRowColors(true);
+    connectionsList->setSelectionMode(QListWidget::SingleSelection);
+    
+    // Container för anslutningslistan med ram
+    QWidget *listContainer = new QWidget(&dialog);
+    QVBoxLayout *listLayout = new QVBoxLayout(listContainer);
+    listLayout->setContentsMargins(0, 0, 0, 0);
+    listLayout->addWidget(connectionsList);
+    listContainer->setStyleSheet("border: 1px solid #555555; border-radius: 4px; padding: 2px;");
+    
+    layout->addWidget(listContainer);
     
     // Uppdatera listan med sparade anslutningar
+    int rowCounter = 0;
     for (const ConnectionInfo &info : m_savedConnections) {
         QString displayText = info.name.isEmpty() ? info.host : info.name;
         QString typeText = (info.type == ConnectionType::FTP) ? "FTP" : "SFTP";
-        displayText = QString("%1 (%2://%3@%4:%5)").arg(
-            displayText, typeText, info.username, info.host, QString::number(info.port));
         
-        QListWidgetItem *item = new QListWidgetItem(displayText);
+        QListWidgetItem *item = new QListWidgetItem();
+        
+        // Skapa en widget för att visa anslutningsinformation med ikon
+        QWidget *connectionWidget = new QWidget();
+        QHBoxLayout *connectionLayout = new QHBoxLayout(connectionWidget);
+        
+        // Välj ikon baserat på anslutningstyp
+        QIcon icon = (info.type == ConnectionType::FTP) 
+                    ? QApplication::style()->standardIcon(QStyle::SP_DriveNetIcon)
+                    : QApplication::style()->standardIcon(QStyle::SP_DriveNetIcon);
+        
+        QLabel *iconLabel = new QLabel();
+        iconLabel->setPixmap(icon.pixmap(24, 24));
+        connectionLayout->addWidget(iconLabel);
+        
+        // Information om anslutningen
+        QVBoxLayout *infoLayout = new QVBoxLayout();
+        QLabel *nameLabel = new QLabel(displayText);
+        nameLabel->setStyleSheet("font-weight: bold;");
+        QLabel *detailsLabel = new QLabel(QString("%1://%2@%3:%4").arg(
+            typeText, info.username, info.host, QString::number(info.port)));
+        detailsLabel->setStyleSheet("color: #888888;");
+        
+        infoLayout->addWidget(nameLabel);
+        infoLayout->addWidget(detailsLabel);
+        connectionLayout->addLayout(infoLayout);
+        connectionLayout->addStretch();
+        
+        // Sätt widgeten i listvyns objekt
         connectionsList->addItem(item);
+        item->setSizeHint(connectionWidget->sizeHint() + QSize(20, 20)); // Lägg till lite extra utrymme
+        connectionsList->setItemWidget(item, connectionWidget);
+        
+        rowCounter++;
     }
     
-    layout->addWidget(new QLabel(tr("Sparade anslutningar:")));
-    layout->addWidget(connectionsList);
+    // Informationstext om det inte finns några anslutningar
+    if (rowCounter == 0) {
+        QLabel *noConnectionsLabel = new QLabel(tr("Inga sparade anslutningar. Använd \"Spara anslutning\" för att lägga till."));
+        noConnectionsLabel->setAlignment(Qt::AlignCenter);
+        noConnectionsLabel->setStyleSheet("color: #888888; padding: 20px;");
+        connectionsList->addItem("");
+        QListWidgetItem *item = connectionsList->item(0);
+        connectionsList->setItemWidget(item, noConnectionsLabel);
+    }
     
     // Knappar för att hantera anslutningar
     QHBoxLayout *buttonLayout = new QHBoxLayout();
-    QPushButton *connectButton = new QPushButton(tr("Anslut"), &dialog);
-    QPushButton *editButton = new QPushButton(tr("Redigera"), &dialog);
-    QPushButton *deleteButton = new QPushButton(tr("Ta bort"), &dialog);
-    QPushButton *closeButton = new QPushButton(tr("Stäng"), &dialog);
+    QPushButton *connectButton = new QPushButton(QApplication::style()->standardIcon(QStyle::SP_CommandLink), tr("Anslut"), &dialog);
+    QPushButton *editButton = new QPushButton(QApplication::style()->standardIcon(QStyle::SP_FileDialogDetailedView), tr("Redigera"), &dialog);
+    QPushButton *deleteButton = new QPushButton(QApplication::style()->standardIcon(QStyle::SP_TrashIcon), tr("Ta bort"), &dialog);
+    QPushButton *closeButton = new QPushButton(QApplication::style()->standardIcon(QStyle::SP_DialogCloseButton), tr("Stäng"), &dialog);
+    
+    connectButton->setStyleSheet("padding: 6px 12px;");
+    editButton->setStyleSheet("padding: 6px 12px;");
+    deleteButton->setStyleSheet("padding: 6px 12px;");
+    closeButton->setStyleSheet("padding: 6px 12px;");
     
     buttonLayout->addWidget(connectButton);
     buttonLayout->addWidget(editButton);
@@ -607,6 +800,17 @@ void MainWindow::showSavedConnectionsDialog()
     buttonLayout->addWidget(closeButton);
     
     layout->addLayout(buttonLayout);
+    
+    // Aktivera/inaktivera knappar baserat på val
+    auto updateButtons = [&]() {
+        bool hasSelection = connectionsList->currentRow() >= 0;
+        connectButton->setEnabled(hasSelection);
+        editButton->setEnabled(hasSelection);
+        deleteButton->setEnabled(hasSelection);
+    };
+    
+    connect(connectionsList, &QListWidget::currentRowChanged, updateButtons);
+    updateButtons(); // Initialt tillstånd
     
     // Anslut knapparna
     connect(connectButton, &QPushButton::clicked, [&]() {
@@ -638,8 +842,9 @@ void MainWindow::showSavedConnectionsDialog()
                                           
             if (reply == QMessageBox::Yes) {
                 m_savedConnections.removeAt(currentRow);
-                connectionsList->takeItem(currentRow);
+                delete connectionsList->takeItem(currentRow);
                 saveSettings();
+                updateButtons();
             }
         }
     });
@@ -1268,6 +1473,12 @@ void MainWindow::populateRemoteFileModel(const QStringList &entries)
 
 void MainWindow::createMenus()
 {
+    // Se till att ui är initierad
+    if (!ui) {
+        qDebug() << "UI not initialized in createMenus()";
+        return;
+    }
+    
     // Skapa huvudmeny
     QMenu *fileMenu = menuBar()->addMenu(tr("Arkiv"));
     
@@ -1352,6 +1563,17 @@ void MainWindow::createMenus()
     // Om-åtgärd
     ui->actionAbout = new QAction(tr("Om DarkFTP"), this);
     helpMenu->addAction(ui->actionAbout);
+    
+    // Anslut actionConnect och actionDisconnect till deras metoder
+    connect(ui->actionConnect, &QAction::triggered, this, &MainWindow::showConnectionDialog);
+    connect(ui->actionDisconnect, &QAction::triggered, this, &MainWindow::disconnectFromFtp);
+    connect(ui->actionExit, &QAction::triggered, this, &QApplication::quit);
+    connect(ui->actionAbout, &QAction::triggered, this, [this]() {
+        QMessageBox::about(this, tr("Om DarkFTP"),
+                          tr("DarkFTP är en modern FTP-klient med mörkt tema.\n\n"
+                             "Skapad med Qt %1\n"
+                             "Version: 0.1").arg(QT_VERSION_STR));
+    });
 }
 
 void MainWindow::appendToLog(const QString &message)
