@@ -27,107 +27,44 @@
 #include <QDropEvent>
 #include <QTimer>
 #include <QRandomGenerator>
+#include <QMimeType>
+#include <QMimeDatabase>
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
-    , ui(new Ui::MainWindow)
     , m_ftpManager(new FtpManager(this))
     , m_sftpManager(new SftpManager(this))
-    , m_activeConnectionType(ConnectionType::FTP)
-    , m_localFileModel(new QFileSystemModel(this))
-    , m_remoteFileModel(new QStandardItemModel(this))
-    , m_currentLocalPath(QDir::homePath())
-    , m_currentRemotePath("/")
-    , m_currentDragAction(DragDropAction::None)
-    , m_connectButton(nullptr)
-    , m_disconnectButton(nullptr)
-    , m_savedConnectionsList(nullptr)
-    , m_localView(nullptr)
-    , m_remoteView(nullptr)
-    , m_localPathEdit(nullptr)
-    , m_remotePathEdit(nullptr)
-    , m_uploadButton(nullptr)
-    , m_downloadButton(nullptr)
-    , m_progressBar(nullptr)
-    , m_statusLabel(nullptr)
-    , m_logTextEdit(nullptr)
-    , m_themeComboBox(nullptr)
-    , m_connectionDialog(nullptr)
-    , m_serverInput(nullptr)
-    , m_usernameInput(nullptr)
-    , m_passwordInput(nullptr)
-    , m_portInput(nullptr)
-    , m_connectionTypeCombo(nullptr)
+    , m_connected(false)
+    , m_tabWidget(nullptr)
+    , m_currentTabIndex(-1)
+    , m_currentTheme(ThemeDark)
+    , m_currentDragAction(DragNone)
+    , m_settings(QSettings::IniFormat, QSettings::UserScope, "DarkFTP", "settings")
 {
-    qDebug() << "MainWindow constructor started";
+    qDebug() << "Starting MainWindow constructor";
     
-    try {
-        ui->setupUi(this);
-        setWindowTitle("DarkFTP");
-        resize(1024, 768);
-        
-        // Skapa anslutningsdialog först
-        setupConnectionDialog();
-        
-        // Ladda inställningar och anslutningar
-        loadSettings();
-        
-        setupUi();
-        setupModels();
-        setupConnections();
-        
-        // FTP Manager-signaler
-        connect(m_ftpManager, &FtpManager::error, this, &MainWindow::onFtpError);
-        connect(m_ftpManager, &FtpManager::connected, this, &MainWindow::onFtpConnected);
-        connect(m_ftpManager, &FtpManager::disconnected, this, &MainWindow::onFtpDisconnected);
-        connect(m_ftpManager, &FtpManager::directoryListed, this, &MainWindow::onDirectoryListed);
-        
-        // Anpassa anslutningar för att hantera filsökvägar i signalerna
-        connect(m_ftpManager, &FtpManager::downloadProgress, 
-                this, [=](const QString &filePath, qint64 bytesReceived, qint64 bytesTotal) {
-                    // Skicka vidare till onFtpDownloadProgress
-                    onFtpDownloadProgress(filePath, bytesReceived, bytesTotal);
-                });
-        connect(m_ftpManager, &FtpManager::uploadProgress, 
-                this, [=](const QString &filePath, qint64 bytesSent, qint64 bytesTotal) {
-                    // Skicka vidare till onFtpUploadProgress
-                    onFtpUploadProgress(filePath, bytesSent, bytesTotal);
-                });
-        
-        connect(m_ftpManager, &FtpManager::downloadFinished, this, &MainWindow::onDownloadFinished);
-        connect(m_ftpManager, &FtpManager::uploadFinished, this, &MainWindow::onUploadFinished);
-        
-        // SFTP Manager-signaler
-        connect(m_sftpManager, &SftpManager::error, this, &MainWindow::onFtpError);
-        connect(m_sftpManager, &SftpManager::connected, this, &MainWindow::onFtpConnected);
-        connect(m_sftpManager, &SftpManager::disconnected, this, &MainWindow::onFtpDisconnected);
-        connect(m_sftpManager, &SftpManager::directoryListed, this, &MainWindow::onDirectoryListed);
-        
-        // Anpassa anslutningar för att hantera filsökvägar i signalerna
-        connect(m_sftpManager, &SftpManager::downloadProgress, 
-                this, &MainWindow::onFtpDownloadProgress);
-        connect(m_sftpManager, &SftpManager::uploadProgress, 
-                this, &MainWindow::onFtpUploadProgress);
-        
-        connect(m_sftpManager, &SftpManager::downloadFinished, this, &MainWindow::onDownloadFinished);
-        connect(m_sftpManager, &SftpManager::uploadFinished, this, &MainWindow::onUploadFinished);
-        connect(m_sftpManager, &SftpManager::logMessage, this, &MainWindow::appendToLog);
-        
-        // Sätt standardtema
-        setTheme(AppTheme::DarkTermius);
-        
-        // Logga uppstart
-        appendToLog(tr("DarkFTP startad - redo att ansluta"));
-        
-        updateUIState();
-        updateConnectionsList();
-        
-        qDebug() << "MainWindow constructor completed successfully";
-    } catch (const std::exception& e) {
-        qDebug() << "Exception in MainWindow constructor: " << e.what();
-    } catch (...) {
-        qDebug() << "Unknown exception in MainWindow constructor";
-    }
+    // Ställ in applikationsdata
+    QCoreApplication::setOrganizationName("DarkFTP");
+    QCoreApplication::setApplicationName("DarkFTP");
+    
+    // Ställ in fönsteregenskaper
+    setWindowTitle(tr("DarkFTP"));
+    setWindowIcon(QIcon(":/images/darkftp_icon.png"));
+    
+    // Koppla FTP-hanterarens signaler
+    connect(m_ftpManager, &FtpManager::commandSent, this, &MainWindow::onFtpCommandSent);
+    connect(m_ftpManager, &FtpManager::directoryListed, this, &MainWindow::onDirectoryListed);
+    connect(m_ftpManager, &FtpManager::transferProgress, this, &MainWindow::onTransferProgress);
+    
+    // Koppla SFTP-hanterarens signaler
+    connect(m_sftpManager, &SftpManager::directoryListed, this, &MainWindow::onDirectoryListed);
+    connect(m_sftpManager, &SftpManager::transferProgress, this, &MainWindow::onTransferProgress);
+    
+    // Ladda inställningar
+    loadSettings();
+    
+    // Skapa användargränssnitt
+    setupUi();
 }
 
 MainWindow::~MainWindow()
@@ -363,88 +300,36 @@ void MainWindow::setupUi()
 {
     qDebug() << "Setting up UI";
     
-    // Skapa huvud-splitter och layouter
-    QSplitter *mainSplitter = new QSplitter(Qt::Vertical, this);
-    QSplitter *fileSplitter = new QSplitter(Qt::Horizontal, this);
+    // Skapa huvudflikwidget
+    m_tabWidget = new QTabWidget(this);
+    m_tabWidget->setTabsClosable(true);
+    m_tabWidget->setMovable(true);
+    m_tabWidget->setDocumentMode(true);
+    m_tabWidget->setStyleSheet("QTabBar::tab { min-width: 120px; height: 28px; }");
     
-    // Skapa widgets för filhantering
-    QWidget *localContainer = new QWidget();
-    QVBoxLayout *localLayout = new QVBoxLayout(localContainer);
-    m_localView = new QTreeView();
-    m_localPathEdit = new QLineEdit();
-    QPushButton *browseButton = new QPushButton(QApplication::style()->standardIcon(QStyle::SP_DirOpenIcon), tr("Bläddra..."));
-    QHBoxLayout *localPathLayout = new QHBoxLayout();
+    // Anslut signaler för flikhantering
+    connect(m_tabWidget, &QTabWidget::tabCloseRequested, this, &MainWindow::closeTab);
+    connect(m_tabWidget, &QTabWidget::currentChanged, this, &MainWindow::switchTab);
     
-    QLabel *homeIconLabel = new QLabel();
-    homeIconLabel->setPixmap(QApplication::style()->standardIcon(QStyle::SP_DirHomeIcon).pixmap(16, 16));
-    localPathLayout->addWidget(homeIconLabel);
+    // Lägg till en knapp för att lägga till nya flikar
+    QPushButton* addTabButton = new QPushButton(QApplication::style()->standardIcon(QStyle::SP_FileDialogNewFolder), "");
+    addTabButton->setToolTip(tr("Ny anslutning"));
+    addTabButton->setFlat(true);
+    addTabButton->setMaximumSize(24, 24);
+    m_tabWidget->setCornerWidget(addTabButton, Qt::TopLeftCorner);
+    connect(addTabButton, &QPushButton::clicked, [this]() {
+        showConnectionDialog();
+    });
     
-    localPathLayout->addWidget(m_localPathEdit);
-    localPathLayout->addWidget(browseButton);
-    QLabel *localLabel = new QLabel(tr("Lokala filer"));
-    localLabel->setStyleSheet("font-weight: bold; font-size: 11pt; padding: 4px;");
-    localLayout->addWidget(localLabel);
-    localLayout->addLayout(localPathLayout);
-    localLayout->addWidget(m_localView);
+    // Lägg till första fliken (välkomstflik)
+    addNewTab();
     
-    // Rundade hörn för lokala fil-containern
-    localContainer->setStyleSheet("background-color: rgba(40, 40, 40, 50); border-radius: 8px; margin: 2px;");
-    
-    QWidget *remoteContainer = new QWidget();
-    QVBoxLayout *remoteLayout = new QVBoxLayout(remoteContainer);
-    m_remoteView = new QTreeView();
-    m_remotePathEdit = new QLineEdit();
-    QPushButton *goButton = new QPushButton(QApplication::style()->standardIcon(QStyle::SP_DialogOkButton), tr("Gå"));
-    QHBoxLayout *remotePathLayout = new QHBoxLayout();
-    
-    QLabel *netIconLabel = new QLabel();
-    netIconLabel->setPixmap(QApplication::style()->standardIcon(QStyle::SP_DriveNetIcon).pixmap(16, 16));
-    remotePathLayout->addWidget(netIconLabel);
-    
-    remotePathLayout->addWidget(m_remotePathEdit);
-    remotePathLayout->addWidget(goButton);
-    QLabel *remoteLabel = new QLabel(tr("Fjärrfiler"));
-    remoteLabel->setStyleSheet("font-weight: bold; font-size: 11pt; padding: 4px;");
-    remoteLayout->addWidget(remoteLabel);
-    remoteLayout->addLayout(remotePathLayout);
-    remoteLayout->addWidget(m_remoteView);
-    
-    // Rundade hörn för fjärr-containern
-    remoteContainer->setStyleSheet("background-color: rgba(40, 40, 40, 50); border-radius: 8px; margin: 2px;");
-    
-    fileSplitter->addWidget(localContainer);
-    fileSplitter->addWidget(remoteContainer);
-    fileSplitter->setStretchFactor(0, 1);
-    fileSplitter->setStretchFactor(1, 1);
-    
-    // Skapa transferwidget med progressbar
-    QWidget *transferWidget = new QWidget();
-    QVBoxLayout *transferLayout = new QVBoxLayout(transferWidget);
-    m_progressBar = new QProgressBar();
-    m_progressBar->setMinimum(0);
-    m_progressBar->setMaximum(100);
-    m_progressBar->setValue(0);
-    m_statusLabel = new QLabel(tr("Redo"));
-    
-    // Lägg till kontrollknappar med ikoner
-    QHBoxLayout *buttonLayout = new QHBoxLayout();
-    m_uploadButton = new QPushButton(QApplication::style()->standardIcon(QStyle::SP_ArrowUp), tr("Ladda upp"));
-    m_downloadButton = new QPushButton(QApplication::style()->standardIcon(QStyle::SP_ArrowDown), tr("Ladda ner"));
-    QPushButton *refreshButton = new QPushButton(QApplication::style()->standardIcon(QStyle::SP_BrowserReload), tr("Uppdatera"));
-    buttonLayout->addWidget(m_uploadButton);
-    buttonLayout->addWidget(m_downloadButton);
-    buttonLayout->addWidget(refreshButton);
-    buttonLayout->addStretch();
-    
-    transferLayout->addLayout(buttonLayout);
-    transferLayout->addWidget(m_statusLabel);
-    transferLayout->addWidget(m_progressBar);
-    
-    // Skapa loggfönster
-    QWidget *logContainer = new QWidget();
+    // Skapa logglayout i botten
+    QWidget *logContainer = new QWidget(this);
     QVBoxLayout *logLayout = new QVBoxLayout(logContainer);
     m_logTextEdit = new QTextEdit();
     m_logTextEdit->setReadOnly(true);
+    
     // Ge loggfönstret ett monospace-typsnitt
     QFont logFont("Courier New", 9);
     m_logTextEdit->setFont(logFont);
@@ -461,31 +346,31 @@ void MainWindow::setupUi()
     logLayout->addLayout(logControlLayout);
     logLayout->addWidget(m_logTextEdit);
     
-    // Anslut knappar till funktioner
-    connect(browseButton, &QPushButton::clicked, this, &MainWindow::browseLocalDirectory);
-    connect(goButton, &QPushButton::clicked, this, &MainWindow::updateRemoteDirectory);
-    connect(m_uploadButton, &QPushButton::clicked, this, &MainWindow::uploadFile);
-    connect(m_downloadButton, &QPushButton::clicked, this, &MainWindow::downloadFile);
-    connect(refreshButton, &QPushButton::clicked, this, [this]() {
-        updateRemoteDirectory();
-    });
-    connect(clearLogButton, &QPushButton::clicked, this, &MainWindow::clearLog);
+    // Skapa överföringswidget med progressbar
+    QWidget *transferWidget = new QWidget();
+    QVBoxLayout *transferLayout = new QVBoxLayout(transferWidget);
+    m_progressBar = new QProgressBar();
+    m_progressBar->setMinimum(0);
+    m_progressBar->setMaximum(100);
+    m_progressBar->setValue(0);
+    m_statusLabel = new QLabel(tr("Redo"));
     
-    // Lägg till alla komponenter i huvudlayouten
-    mainSplitter->addWidget(fileSplitter);
+    transferLayout->addWidget(m_statusLabel);
+    transferLayout->addWidget(m_progressBar);
     
     // Lägg till en tab-widget för transferinfo och logg
     QTabWidget *bottomTabWidget = new QTabWidget();
     bottomTabWidget->addTab(transferWidget, QApplication::style()->standardIcon(QStyle::SP_FileDialogContentsView), tr("Överföringar"));
     bottomTabWidget->addTab(logContainer, QApplication::style()->standardIcon(QStyle::SP_FileDialogInfoView), tr("Loggfönster"));
     
+    // Huvudsplitter mellan flikwidget och bottenfönster
+    QSplitter *mainSplitter = new QSplitter(Qt::Vertical, this);
+    mainSplitter->addWidget(m_tabWidget);
     mainSplitter->addWidget(bottomTabWidget);
     mainSplitter->setStretchFactor(0, 3);
     mainSplitter->setStretchFactor(1, 1);
     
-    // Inaktivera knappar initiellt (innan anslutning)
-    m_uploadButton->setEnabled(false);
-    m_downloadButton->setEnabled(false);
+    connect(clearLogButton, &QPushButton::clicked, this, &MainWindow::clearLog);
     
     setCentralWidget(mainSplitter);
     
@@ -505,6 +390,9 @@ void MainWindow::setupUi()
             QGuiApplication::primaryScreen()->availableGeometry()
         )
     );
+    
+    // Initiera filikoner
+    initializeFileIcons();
 }
 
 void MainWindow::setupConnectionDialog()
@@ -1115,86 +1003,138 @@ void MainWindow::updateRemoteDirectory()
 
 void MainWindow::uploadFile()
 {
-    if (!m_ftpManager->isConnected()) {
+    if (!m_connected || m_currentTabIndex < 0 || m_currentTabIndex >= m_tabs.size()) {
         return;
     }
     
-    // Hämta den valda filen från lokal filvy
-    QModelIndex index = m_localView->currentIndex();
-    if (!index.isValid()) {
-        QMessageBox::warning(this, tr("Uppladdningsfel"), tr("Vänligen välj en fil att ladda upp."));
+    TabInfo &currentTab = m_tabs[m_currentTabIndex];
+    
+    // Hämta valda filer/kataloger
+    QModelIndexList selectedIndexes = currentTab.localView->selectionModel()->selectedIndexes();
+    
+    // Filtrera ut endast första kolumnen för att undvika dubbletter
+    QModelIndexList fileIndexes;
+    for (const QModelIndex &index : selectedIndexes) {
+        if (index.column() == 0) {
+            fileIndexes.append(index);
+        }
+    }
+    
+    // Om ingen fil är vald
+    if (fileIndexes.isEmpty()) {
+        QMessageBox::information(this, tr("Information"), tr("Välj en fil att ladda upp."));
         return;
     }
     
-    QString localPath = m_localFileModel->filePath(index);
-    QFileInfo fileInfo(localPath);
-    
-    if (fileInfo.isDir()) {
-        QMessageBox::warning(this, tr("Uppladdningsfel"), tr("Mappuppladdning stöds inte än."));
-        return;
+    // För varje vald fil
+    for (const QModelIndex &index : fileIndexes) {
+        QString localFilePath = currentTab.localFileModel->filePath(index);
+        QFileInfo fileInfo(localFilePath);
+        
+        // Skapa filsökvägen på fjärrservern
+        QString remoteFilePath = currentTab.currentRemotePath;
+        if (!remoteFilePath.endsWith('/')) {
+            remoteFilePath += '/';
+        }
+        remoteFilePath += fileInfo.fileName();
+        
+        // Logga operationen
+        m_logTextEdit->append(tr("Laddar upp: %1 -> %2").arg(localFilePath, remoteFilePath));
+        
+        // Ställ in visuella indikatorer
+        m_progressBar->setValue(0);
+        m_statusLabel->setText(tr("Laddar upp %1...").arg(fileInfo.fileName()));
+        m_currentDragAction = DragUpload;
+        
+        // Ladda upp med rätt protokoll
+        if (m_currentConnection.isUseSSH) {
+            m_sftpManager->uploadFile(localFilePath, remoteFilePath);
+        } else {
+            m_ftpManager->uploadFile(localFilePath, remoteFilePath);
+        }
+        
+        // För demo-syften, ladda bara upp en fil åt gången
+        // I en mer avancerad implementation skulle man hantera flera samtidiga överföringar
+        break;
     }
-    
-    // Konstruera fjärrsökväg
-    QString remotePath = m_currentRemotePath;
-    if (!remotePath.endsWith('/')) {
-        remotePath += '/';
-    }
-    remotePath += fileInfo.fileName();
-    
-    // Starta uppladdning
-    m_statusLabel->setText(tr("Laddar upp %1...").arg(fileInfo.fileName()));
-    m_progressBar->setValue(0);
-    m_uploadButton->setEnabled(false);
-    m_downloadButton->setEnabled(false);
-    
-    m_ftpManager->uploadFile(localPath, remotePath);
-    appendToLog(tr("Laddar upp %1...").arg(fileInfo.fileName()));
 }
 
 void MainWindow::downloadFile()
 {
-    if (!m_ftpManager->isConnected()) {
+    if (!m_connected || m_currentTabIndex < 0 || m_currentTabIndex >= m_tabs.size()) {
         return;
     }
     
-    // Hämta den valda filen från fjärrfilvy
-    QModelIndex index = m_remoteView->currentIndex();
-    if (!index.isValid()) {
-        QMessageBox::warning(this, tr("Nedladdningsfel"), tr("Vänligen välj en fil att ladda ner."));
+    TabInfo &currentTab = m_tabs[m_currentTabIndex];
+    
+    // Hämta valda filer
+    QModelIndexList selectedIndexes = currentTab.remoteView->selectionModel()->selectedIndexes();
+    
+    // Filtrera ut endast första kolumnen för att undvika dubbletter
+    QModelIndexList fileIndexes;
+    for (const QModelIndex &index : selectedIndexes) {
+        if (index.column() == 0) {
+            fileIndexes.append(index);
+        }
+    }
+    
+    // Om ingen fil är vald
+    if (fileIndexes.isEmpty()) {
+        QMessageBox::information(this, tr("Information"), tr("Välj en fil att ladda ner."));
         return;
     }
     
-    QString fileName = m_remoteFileModel->data(index).toString();
-    QString fileType = m_remoteFileModel->data(index.sibling(index.row(), 2)).toString();
-    
-    if (fileType == tr("Mapp")) {
-        QMessageBox::warning(this, tr("Nedladdningsfel"), tr("Mappnedladdning stöds inte än."));
-        return;
+    // För varje vald fil
+    for (const QModelIndex &index : fileIndexes) {
+        // Hämta filnamn och filtyp
+        QString fileName = currentTab.remoteFileModel->data(index).toString();
+        QString fileType = currentTab.remoteFileModel->data(
+            currentTab.remoteFileModel->index(index.row(), 2)).toString();
+        
+        // Om det är en katalog, hantera separat
+        if (fileType == tr("Katalog")) {
+            // För enkelhets skull, bara navigera till katalogen istället för att ladda ner
+            QString newPath = currentTab.currentRemotePath;
+            if (!newPath.endsWith('/')) {
+                newPath += '/';
+            }
+            newPath += fileName;
+            
+            updateRemoteDirectory(newPath);
+            return;
+        }
+        
+        // Skapa sökvägar
+        QString remoteFilePath = currentTab.currentRemotePath;
+        if (!remoteFilePath.endsWith('/')) {
+            remoteFilePath += '/';
+        }
+        remoteFilePath += fileName;
+        
+        QString localFilePath = currentTab.localPathEdit->text();
+        if (!localFilePath.endsWith('/') && !localFilePath.endsWith('\\')) {
+            localFilePath += QDir::separator();
+        }
+        localFilePath += fileName;
+        
+        // Logga operationen
+        m_logTextEdit->append(tr("Laddar ner: %1 -> %2").arg(remoteFilePath, localFilePath));
+        
+        // Ställ in visuella indikatorer
+        m_progressBar->setValue(0);
+        m_statusLabel->setText(tr("Laddar ner %1...").arg(fileName));
+        m_currentDragAction = DragDownload;
+        
+        // Ladda ner med rätt protokoll
+        if (m_currentConnection.isUseSSH) {
+            m_sftpManager->downloadFile(remoteFilePath, localFilePath);
+        } else {
+            m_ftpManager->downloadFile(remoteFilePath, localFilePath);
+        }
+        
+        // För demo-syften, ladda bara ner en fil åt gången
+        break;
     }
-    
-    // Konstruera fjärrsökväg
-    QString remotePath = m_currentRemotePath;
-    if (!remotePath.endsWith('/')) {
-        remotePath += '/';
-    }
-    remotePath += fileName;
-    
-    // Fråga användaren var filen ska sparas
-    QString localPath = QFileDialog::getSaveFileName(this, tr("Spara fil som"),
-                                                    m_currentLocalPath + "/" + fileName);
-    
-    if (localPath.isEmpty()) {
-        return;
-    }
-    
-    // Starta nedladdning
-    m_statusLabel->setText(tr("Laddar ner %1...").arg(fileName));
-    m_progressBar->setValue(0);
-    m_uploadButton->setEnabled(false);
-    m_downloadButton->setEnabled(false);
-    
-    m_ftpManager->downloadFile(remotePath, localPath);
-    appendToLog(tr("Laddar ner %1...").arg(fileName));
 }
 
 void MainWindow::onFtpConnected()
@@ -1242,67 +1182,52 @@ void MainWindow::onFtpError(const QString &errorMessage)
 
 void MainWindow::onDirectoryListed(const QStringList &entries)
 {
-    qDebug() << "Listar innehåll i katalog";
-    m_remoteFileModel->removeRows(0, m_remoteFileModel->rowCount());
-    
-    for (const QString &entry : entries) {
-        bool isDirectory = false;
-        QString fileName;
-        QString fileSize = "";
-        QString fileType;
-        
-        if (m_activeConnectionType == ConnectionType::FTP) {
-            // Hantera FTP-listningsformat (som är i det gamla formatet med fullständig detaljerad listning)
-            if (entry.startsWith("d")) {
-                isDirectory = true;
-            }
-            
-            // Tolka FTP-format och extrahera information
-            QStringList parts = entry.split(QRegularExpression("\\s+"), Qt::SkipEmptyParts);
-            if (parts.size() >= 9) {
-                fileName = parts.at(8);
-                fileSize = parts.at(4);
-                fileType = isDirectory ? tr("Mapp") : tr("Fil");
-            }
-        } else if (m_activeConnectionType == ConnectionType::SFTP) {
-            // Hantera SFTP-listningsformat (enbart filnamn)
-            fileName = entry;
-            
-            if (fileName == "..") {
-                isDirectory = true;
-                fileType = tr("Mapp");
-            } else if (fileName.contains(".")) {
-                // Anta att det är en fil om den har en filändelse
-                isDirectory = false;
-                fileType = tr("Fil");
-                fileSize = QString("%1 KB").arg(QRandomGenerator::global()->bounded(10, 10000));
-            } else {
-                // Om inget . finns, anta att det är en mapp
-                isDirectory = true;
-                fileType = tr("Mapp");
-            }
-        }
-        
-        if (!fileName.isEmpty()) {
-            QList<QStandardItem*> rowItems;
-            QStandardItem *nameItem = new QStandardItem(fileName);
-            QStandardItem *sizeItem = new QStandardItem(fileSize);
-            QStandardItem *typeItem = new QStandardItem(fileType);
-            
-            // Ställ in ikoner för att skilja mellan filer och mappar
-            if (isDirectory) {
-                nameItem->setIcon(QApplication::style()->standardIcon(QStyle::SP_DirIcon));
-            } else {
-                nameItem->setIcon(QApplication::style()->standardIcon(QStyle::SP_FileIcon));
-            }
-            
-            rowItems << nameItem << sizeItem << typeItem;
-            m_remoteFileModel->appendRow(rowItems);
-        }
+    if (!m_connected || m_currentTabIndex < 0 || m_currentTabIndex >= m_tabs.size()) {
+        return;
     }
     
-    // Uppdatera statusfält med antal objekt
-    statusBar()->showMessage(tr("Katalog listad: %1 objekt").arg(entries.size()), 3000);
+    TabInfo &currentTab = m_tabs[m_currentTabIndex];
+    
+    // Rensa modellen
+    currentTab.remoteFileModel->clear();
+    QStringList headers;
+    headers << tr("Namn") << tr("Storlek") << tr("Typ") << tr("Ändrad") << tr("Rättigheter");
+    currentTab.remoteFileModel->setHorizontalHeaderLabels(headers);
+    
+    // Logga
+    m_logTextEdit->append(tr("Mottog fillista med %1 poster").arg(entries.size()));
+    
+    // Lägg till katalogen "." (nuvarande katalog)
+    QList<QStandardItem*> currentRow;
+    currentRow.append(new QStandardItem(QApplication::style()->standardIcon(QStyle::SP_DirIcon), "."));
+    currentRow.append(new QStandardItem(""));
+    currentRow.append(new QStandardItem(tr("Katalog")));
+    currentRow.append(new QStandardItem(""));
+    currentRow.append(new QStandardItem(""));
+    currentTab.remoteFileModel->appendRow(currentRow);
+    
+    // Lägg till katalogen ".." (föräldrakatalog) om vi inte är i rootkatalogen
+    if (currentTab.currentRemotePath != "/" && !currentTab.currentRemotePath.isEmpty()) {
+        QList<QStandardItem*> parentRow;
+        parentRow.append(new QStandardItem(QApplication::style()->standardIcon(QStyle::SP_DirIcon), ".."));
+        parentRow.append(new QStandardItem(""));
+        parentRow.append(new QStandardItem(tr("Katalog")));
+        parentRow.append(new QStandardItem(""));
+        parentRow.append(new QStandardItem(""));
+        currentTab.remoteFileModel->appendRow(parentRow);
+    }
+    
+    // Behandla varje post i listan
+    for (const QString &entry : entries) {
+        // Tolka posten baserat på protokollet
+        if (m_currentConnection.isUseSSH) {
+            // SFTP-format (använder en mer detaljerad listning)
+            processSftpEntry(entry);
+        } else {
+            // FTP-format
+            processFtpEntry(entry);
+        }
+    }
 }
 
 void MainWindow::onDownloadFinished(bool success)
@@ -1891,3 +1816,486 @@ void MainWindow::onRemoteDirectorySelected(const QModelIndex &index)
         updateRemoteDirectory();
     }
 }
+
+// Implementera filikonsinitiering
+void MainWindow::initializeFileIcons()
+{
+    // Text-filer
+    m_fileTypeIcons["text"] = QApplication::style()->standardIcon(QStyle::SP_FileIcon);
+    
+    // Bilder
+    m_fileTypeIcons["image"] = QIcon::fromTheme("image-x-generic", QApplication::style()->standardIcon(QStyle::SP_FileIcon));
+    
+    // Ljud
+    m_fileTypeIcons["audio"] = QIcon::fromTheme("audio-x-generic", QApplication::style()->standardIcon(QStyle::SP_MediaPlay));
+    
+    // Video
+    m_fileTypeIcons["video"] = QIcon::fromTheme("video-x-generic", QApplication::style()->standardIcon(QStyle::SP_MediaPlay));
+    
+    // Arkiv
+    m_fileTypeIcons["archive"] = QIcon::fromTheme("package-x-generic", QApplication::style()->standardIcon(QStyle::SP_FileDialogDetailedView));
+    
+    // Dokument
+    m_fileTypeIcons["pdf"] = QIcon::fromTheme("application-pdf", QApplication::style()->standardIcon(QStyle::SP_FileIcon));
+    m_fileTypeIcons["document"] = QIcon::fromTheme("x-office-document", QApplication::style()->standardIcon(QStyle::SP_FileIcon));
+    m_fileTypeIcons["spreadsheet"] = QIcon::fromTheme("x-office-spreadsheet", QApplication::style()->standardIcon(QStyle::SP_FileIcon));
+    m_fileTypeIcons["presentation"] = QIcon::fromTheme("x-office-presentation", QApplication::style()->standardIcon(QStyle::SP_FileIcon));
+    
+    // Källkod
+}
+
+// Implementera anslutning till server
+void MainWindow::connectToServer(const Connection &connection)
+{
+    if (m_currentTabIndex < 0 || m_currentTabIndex >= m_tabs.size()) {
+        return;
+    }
+    
+    // Logga
+    QString logMessage = tr("Ansluter till %1 via %2...").arg(connection.host, connection.isUseSSH ? "SFTP" : "FTP");
+    m_logTextEdit->append(logMessage);
+    
+    // Spara anslutningsinformation i nuvarande flik
+    m_tabs[m_currentTabIndex].connectionInfo = connection;
+    m_currentConnection = connection;
+    
+    // Uppdatera fliktitel
+    updateTabTitle(m_currentTabIndex, connection.name.isEmpty() ? connection.host : connection.name);
+    
+    // Rensa fjärrvyn
+    if (m_tabs[m_currentTabIndex].remoteFileModel) {
+        m_tabs[m_currentTabIndex].remoteFileModel->clear();
+        QStringList headers;
+        headers << tr("Namn") << tr("Storlek") << tr("Typ") << tr("Ändrad") << tr("Rättigheter");
+        m_tabs[m_currentTabIndex].remoteFileModel->setHorizontalHeaderLabels(headers);
+    }
+    
+    // Anslut med rätt protokoll
+    if (connection.isUseSSH) {
+        // SFTP-anslutning
+        m_sftpManager->connectToHost(
+            connection.host,
+            connection.username,
+            connection.password,
+            connection.port
+        );
+    } else {
+        // FTP-anslutning
+        m_ftpManager->connectToHost(
+            connection.host,
+            connection.username,
+            connection.password,
+            connection.port
+        );
+    }
+    
+    // Uppdatera status
+    m_connected = true;
+    m_statusLabel->setText(tr("Ansluten till %1").arg(connection.host));
+    
+    // Aktivera knappar i nuvarande flik
+    m_tabs[m_currentTabIndex].uploadButton->setEnabled(true);
+    m_tabs[m_currentTabIndex].downloadButton->setEnabled(false);
+    
+    // Sätt initial fjärrkatalog
+    m_tabs[m_currentTabIndex].remotePathEdit->setText("/");
+    updateRemoteDirectory("/");
+}
+
+// Implementera frånkoppling från server
+void MainWindow::disconnectFromServer()
+{
+    if (m_currentTabIndex < 0 || m_currentTabIndex >= m_tabs.size() || !m_connected) {
+        return;
+    }
+    
+    // Logga
+    m_logTextEdit->append(tr("Kopplar från %1...").arg(m_currentConnection.host));
+    
+    // Koppla från med rätt protokoll
+    if (m_currentConnection.isUseSSH) {
+        m_sftpManager->disconnectFromHost();
+    } else {
+        m_ftpManager->disconnectFromHost();
+    }
+    
+    // Uppdatera status
+    m_connected = false;
+    m_statusLabel->setText(tr("Inte ansluten"));
+    
+    // Inaktivera knappar i nuvarande flik
+    m_tabs[m_currentTabIndex].uploadButton->setEnabled(false);
+    m_tabs[m_currentTabIndex].downloadButton->setEnabled(false);
+    
+    // Återställ fliktitel till standardtitel
+    if (!m_tabs[m_currentTabIndex].connectionInfo.name.isEmpty()) {
+        updateTabTitle(m_currentTabIndex, m_tabs[m_currentTabIndex].connectionInfo.name);
+    } else {
+        updateTabTitle(m_currentTabIndex, tr("Ny anslutning"));
+    }
+    
+    // Rensa fjärrvyn
+    if (m_tabs[m_currentTabIndex].remoteFileModel) {
+        m_tabs[m_currentTabIndex].remoteFileModel->clear();
+        QStringList headers;
+        headers << tr("Namn") << tr("Storlek") << tr("Typ") << tr("Ändrad") << tr("Rättigheter");
+        m_tabs[m_currentTabIndex].remoteFileModel->setHorizontalHeaderLabels(headers);
+    }
+}
+
+// Visa anslutningsdialogruta
+void MainWindow::showConnectionDialog()
+{
+    ConnectionDialog dialog(this);
+    
+    // Om vi är anslutna, förifyll med nuvarande anslutning
+    if (m_connected && m_currentTabIndex >= 0 && m_currentTabIndex < m_tabs.size()) {
+        dialog.setConnection(m_tabs[m_currentTabIndex].connectionInfo);
+    }
+    
+    // Visa dialogrutan
+    if (dialog.exec() == QDialog::Accepted) {
+        Connection connection = dialog.getConnection();
+        
+        // Om vi redan har en flik med denna anslutning, använd den
+        bool foundExistingTab = false;
+        for (int i = 0; i < m_tabs.size(); i++) {
+            if (m_tabs[i].connectionInfo.host == connection.host &&
+                m_tabs[i].connectionInfo.username == connection.username &&
+                m_tabs[i].connectionInfo.port == connection.port) {
+                
+                m_tabWidget->setCurrentIndex(i);
+                m_currentTabIndex = i;
+                foundExistingTab = true;
+                break;
+            }
+        }
+        
+        // Om vi inte hittade en befintlig flik, skapa en ny
+        if (!foundExistingTab) {
+            // Om nuvarande flik är tom och inte ansluten, återanvänd den
+            if (m_currentTabIndex >= 0 && m_currentTabIndex < m_tabs.size() && 
+                !m_connected && m_tabs[m_currentTabIndex].connectionInfo.host.isEmpty()) {
+                
+                connectToServer(connection);
+            } else {
+                // Annars, skapa en ny flik med anslutningen
+                addNewTab(connection);
+            }
+        } else {
+            // Anslut om vi inte redan är anslutna
+            if (!m_connected) {
+                connectToServer(connection);
+            }
+        }
+    }
+}
+
+// Implementera uppdatering av lokalkatalog
+void MainWindow::updateLocalDirectory(const QString &path)
+{
+    if (m_currentTabIndex < 0 || m_currentTabIndex >= m_tabs.size()) {
+        return;
+    }
+    
+    TabInfo &currentTab = m_tabs[m_currentTabIndex];
+    
+    // Uppdatera sökväg i textfältet
+    currentTab.localPathEdit->setText(path);
+    
+    // Sätt rotindex för trädvyn
+    QModelIndex index = currentTab.localFileModel->index(path);
+    currentTab.localView->setRootIndex(index);
+    
+    // Logga
+    m_logTextEdit->append(tr("Lokal katalog ändrad till: %1").arg(path));
+}
+
+// Implementera bläddring i lokalkatalog
+void MainWindow::browseLocalDirectory()
+{
+    if (m_currentTabIndex < 0 || m_currentTabIndex >= m_tabs.size()) {
+        return;
+    }
+    
+    TabInfo &currentTab = m_tabs[m_currentTabIndex];
+    
+    // Visa fildialogruta
+    QString currentPath = currentTab.localPathEdit->text();
+    QString newPath = QFileDialog::getExistingDirectory(
+        this, 
+        tr("Välj katalog"), 
+        currentPath,
+        QFileDialog::ShowDirsOnly | QFileDialog::DontResolveSymlinks
+    );
+    
+    if (!newPath.isEmpty()) {
+        updateLocalDirectory(newPath);
+    }
+}
+
+// Implementera uppdatering av fjärrkatalog
+void MainWindow::updateRemoteDirectory(const QString &path)
+{
+    if (!m_connected || m_currentTabIndex < 0 || m_currentTabIndex >= m_tabs.size()) {
+        return;
+    }
+    
+    TabInfo &currentTab = m_tabs[m_currentTabIndex];
+    
+    // Använd angiven sökväg eller den nuvarande i textfältet
+    QString remotePath = path.isEmpty() ? currentTab.remotePathEdit->text() : path;
+    
+    // Uppdatera sökväg i textfältet
+    currentTab.remotePathEdit->setText(remotePath);
+    currentTab.currentRemotePath = remotePath;
+    
+    // Logga
+    m_logTextEdit->append(tr("Hämtar fillistning från: %1").arg(remotePath));
+    
+    // Rensa fjärrmodellen
+    currentTab.remoteFileModel->clear();
+    QStringList headers;
+    headers << tr("Namn") << tr("Storlek") << tr("Typ") << tr("Ändrad") << tr("Rättigheter");
+    currentTab.remoteFileModel->setHorizontalHeaderLabels(headers);
+    
+    // Hämta fillista med rätt protokoll
+    if (m_currentConnection.isUseSSH) {
+        m_sftpManager->listDirectory(remotePath);
+    } else {
+        m_ftpManager->listDirectory(remotePath);
+    }
+}
+
+// Hjälpmetod för att processa FTP-listningspost
+void MainWindow::processFtpEntry(const QString &entry)
+{
+    if (m_currentTabIndex < 0 || m_currentTabIndex >= m_tabs.size()) {
+        return;
+    }
+    
+    TabInfo &currentTab = m_tabs[m_currentTabIndex];
+    
+    // Exempel: "drwxr-xr-x 2 user group 4096 Apr 13 05:35 DirectoryName"
+    QStringList parts = entry.split(QRegularExpression("\\s+"), Qt::SkipEmptyParts);
+    if (parts.size() < 9) {
+        return; // Invalid format
+    }
+    
+    QString permissions = parts[0];
+    bool isDirectory = permissions.startsWith('d');
+    QString sizeStr = parts[4];
+    
+    // De delar som anger datum kan variera
+    QString dateStr;
+    if (parts.size() >= 8) {
+        dateStr = parts[5] + " " + parts[6] + " " + parts[7];
+    }
+    
+    // Filnamnet är resten av strängen efter den 8:e delen
+    QString fileName = parts.mid(8).join(" ");
+    
+    // Skapa en ny rad
+    QList<QStandardItem*> row;
+    
+    // Bestäm ikon baserat på filtyp
+    QIcon icon;
+    QString fileType;
+    
+    if (isDirectory) {
+        icon = m_fileTypeIcons["folder"];
+        fileType = tr("Katalog");
+    } else {
+        QString iconType = getFileIconName(fileName, false);
+        icon = m_fileTypeIcons.contains(iconType) ? m_fileTypeIcons[iconType] : m_fileTypeIcons["default"];
+        
+        // Filtyp baserat på filändelse
+        QFileInfo fileInfo(fileName);
+        fileType = fileInfo.suffix().toUpper();
+        if (fileType.isEmpty()) {
+            fileType = tr("Fil");
+        }
+    }
+    
+    // Lägg till kolumner
+    row.append(new QStandardItem(icon, fileName));
+    row.append(new QStandardItem(sizeStr));
+    row.append(new QStandardItem(fileType));
+    row.append(new QStandardItem(dateStr));
+    row.append(new QStandardItem(permissions));
+    
+    // Lägg till raden i modellen
+    currentTab.remoteFileModel->appendRow(row);
+}
+
+// Hjälpmetod för att processa SFTP-listningspost
+void MainWindow::processSftpEntry(const QString &entry)
+{
+    if (m_currentTabIndex < 0 || m_currentTabIndex >= m_tabs.size()) {
+        return;
+    }
+    
+    TabInfo &currentTab = m_tabs[m_currentTabIndex];
+    
+    // Tolka SFTP-posten (antar JSON-format)
+    QJsonDocument doc = QJsonDocument::fromJson(entry.toUtf8());
+    
+    if (!doc.isObject()) {
+        return;
+    }
+    
+    QJsonObject obj = doc.object();
+    QString fileName = obj["name"].toString();
+    bool isDirectory = obj["isDir"].toBool();
+    qint64 fileSize = obj["size"].toVariant().toLongLong();
+    QString permissions = obj["permissions"].toString();
+    QString lastModified = obj["lastModified"].toString();
+    
+    // Hoppa över "." och ".." då vi redan lagt till dem manuellt
+    if (fileName == "." || fileName == "..") {
+        return;
+    }
+    
+    // Skapa en ny rad
+    QList<QStandardItem*> row;
+    
+    // Bestäm ikon baserat på filtyp
+    QIcon icon;
+    QString fileType;
+    
+    if (isDirectory) {
+        icon = m_fileTypeIcons["folder"];
+        fileType = tr("Katalog");
+    } else {
+        QString iconType = getFileIconName(fileName, false);
+        icon = m_fileTypeIcons.contains(iconType) ? m_fileTypeIcons[iconType] : m_fileTypeIcons["default"];
+        
+        // Filtyp baserat på filändelse
+        QFileInfo fileInfo(fileName);
+        fileType = fileInfo.suffix().toUpper();
+        if (fileType.isEmpty()) {
+            fileType = tr("Fil");
+        }
+    }
+    
+    // Formatera filstorlek
+    QString sizeStr;
+    if (isDirectory) {
+        sizeStr = "--";
+    } else if (fileSize < 1024) {
+        sizeStr = QString("%1 B").arg(fileSize);
+    } else if (fileSize < 1024 * 1024) {
+        sizeStr = QString("%1 KB").arg(fileSize / 1024.0, 0, 'f', 1);
+    } else if (fileSize < 1024 * 1024 * 1024) {
+        sizeStr = QString("%1 MB").arg(fileSize / (1024.0 * 1024.0), 0, 'f', 1);
+    } else {
+        sizeStr = QString("%1 GB").arg(fileSize / (1024.0 * 1024.0 * 1024.0), 0, 'f', 1);
+    }
+    
+    // Lägg till kolumner
+    row.append(new QStandardItem(icon, fileName));
+    row.append(new QStandardItem(sizeStr));
+    row.append(new QStandardItem(fileType));
+    row.append(new QStandardItem(lastModified));
+    row.append(new QStandardItem(permissions));
+    
+    // Lägg till raden i modellen
+    currentTab.remoteFileModel->appendRow(row);
+}
+
+// Implementera skapande av menyer
+void MainWindow::createMenus()
+{
+    // Fil-meny
+    QMenu *fileMenu = menuBar()->addMenu(tr("&Arkiv"));
+    
+    QAction *newTabAction = fileMenu->addAction(QApplication::style()->standardIcon(QStyle::SP_FileDialogNewFolder), tr("&Ny flik"));
+    connect(newTabAction, &QAction::triggered, [this]() {
+        addNewTab();
+    });
+    
+    QAction *connectAction = fileMenu->addAction(QApplication::style()->standardIcon(QStyle::SP_DialogOkButton), tr("&Anslut..."));
+    connect(connectAction, &QAction::triggered, this, &MainWindow::showConnectionDialog);
+    
+    QAction *disconnectAction = fileMenu->addAction(QApplication::style()->standardIcon(QStyle::SP_DialogCancelButton), tr("&Koppla från"));
+    connect(disconnectAction, &QAction::triggered, this, &MainWindow::disconnectFromServer);
+    
+    fileMenu->addSeparator();
+    
+    QAction *exitAction = fileMenu->addAction(QApplication::style()->standardIcon(QStyle::SP_DialogCloseButton), tr("A&vsluta"));
+    connect(exitAction, &QAction::triggered, this, &MainWindow::close);
+    
+    // Redigera-meny
+    QMenu *editMenu = menuBar()->addMenu(tr("&Redigera"));
+    
+    QAction *preferencesAction = editMenu->addAction(QApplication::style()->standardIcon(QStyle::SP_FileDialogDetailedView), tr("&Inställningar..."));
+    connect(preferencesAction, &QAction::triggered, this, &MainWindow::showPreferences);
+    
+    // Visa-meny
+    QMenu *viewMenu = menuBar()->addMenu(tr("&Visa"));
+    
+    QAction *refreshAction = viewMenu->addAction(QApplication::style()->standardIcon(QStyle::SP_BrowserReload), tr("&Uppdatera"));
+    connect(refreshAction, &QAction::triggered, [this]() {
+        if (m_connected) {
+            updateRemoteDirectory();
+        }
+    });
+    
+    viewMenu->addSeparator();
+    
+    // Undermeny för teman
+    QMenu *themeMenu = viewMenu->addMenu(tr("&Tema"));
+    
+    QAction *lightThemeAction = themeMenu->addAction(tr("&Ljust"));
+    connect(lightThemeAction, &QAction::triggered, [this]() {
+        setTheme(ThemeLight);
+    });
+    
+    QAction *darkThemeAction = themeMenu->addAction(tr("&Mörkt"));
+    connect(darkThemeAction, &QAction::triggered, [this]() {
+        setTheme(ThemeDark);
+    });
+    
+    QAction *customThemeAction = themeMenu->addAction(tr("&Anpassat..."));
+    connect(customThemeAction, &QAction::triggered, [this]() {
+        setTheme(ThemeCustom);
+    });
+    
+    // Hjälp-meny
+    QMenu *helpMenu = menuBar()->addMenu(tr("&Hjälp"));
+    
+    QAction *aboutAction = helpMenu->addAction(QApplication::style()->standardIcon(QStyle::SP_MessageBoxInformation), tr("&Om DarkFTP"));
+    connect(aboutAction, &QAction::triggered, this, &MainWindow::showAboutDialog);
+}
+
+// Implementera inläsning av inställningar
+void MainWindow::loadSettings()
+{
+    // Läs fönsterposition och storlek
+    if (m_settings.contains("geometry")) {
+        restoreGeometry(m_settings.value("geometry").toByteArray());
+    }
+    
+    // Läs tema
+    if (m_settings.contains("theme")) {
+        m_currentTheme = (ThemeType)m_settings.value("theme").toInt();
+    }
+    
+    // Läs senaste lokala katalog
+    if (m_settings.contains("lastLocalDirectory")) {
+        QString lastLocalDir = m_settings.value("lastLocalDirectory").toString();
+        if (QDir(lastLocalDir).exists()) {
+            // Om katalogen finns, använd den som standard
+            if (m_currentTabIndex >= 0 && m_currentTabIndex < m_tabs.size()) {
+                updateLocalDirectory(lastLocalDir);
+            }
+        }
+    }
+}
+
+// Implementera sparande av inställningar
+void MainWindow::saveSettings()
+{
+    // Spara fönsterposition och storlek
+    m_settings.setValue("geometry", saveGeometry());
+    

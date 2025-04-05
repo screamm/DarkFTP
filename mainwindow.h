@@ -2,189 +2,150 @@
 #define MAINWINDOW_H
 
 #include <QMainWindow>
-#include <QSplitter>
 #include <QTreeView>
+#include <QFileSystemModel>
+#include <QStandardItemModel>
 #include <QLineEdit>
+#include <QSplitter>
+#include <QTextEdit>
 #include <QPushButton>
 #include <QProgressBar>
 #include <QLabel>
-#include <QFileSystemModel>
-#include <QStandardItemModel>
-#include <QComboBox>
+#include <QStatusBar>
 #include <QSettings>
-#include <QListWidget>
-#include <QTextEdit>
+#include <QCloseEvent>
+#include <QMenu>
+#include <QMenuBar>
 #include <QTabWidget>
+#include <QTabBar>
+#include <QMimeDatabase>
+#include <QMap>
+#include <QIcon>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QColorDialog>
+#include <QCheckBox>
+#include <QRadioButton>
+#include <QGroupBox>
+#include <QDialogButtonBox>
+
 #include "ftpmanager.h"
 #include "sftpmanager.h"
-
-// Forward-deklaration
-class SftpManager;
-
-// Enum för olika anslutningstyper
-enum class ConnectionType {
-    FTP,
-    SFTP
-};
-
-// Struktur för att hålla anslutningsinformation
-struct ConnectionInfo {
-    QString name;
-    ConnectionType type;
-    QString host;
-    int port;
-    QString username;
-    QString password;
-    
-    // Operatörer för jämförelse
-    bool operator==(const ConnectionInfo& other) const {
-        return name == other.name &&
-               type == other.type &&
-               host == other.host &&
-               port == other.port &&
-               username == other.username;
-    }
-};
-
-// Enum för olika tema
-enum class AppTheme {
-    DarkTermius,
-    RetroBlue,
-    Steampunk,
-    Hacker,
-    Nordisk
-};
-
-// Enum för dragfunktionalitet
-enum class DragDropAction {
-    None,
-    Upload,
-    Download
-};
-
-QT_BEGIN_NAMESPACE
-namespace Ui {
-class MainWindow;
-}
-QT_END_NAMESPACE
+#include "connection.h"
+#include "connectiondialog.h"
+#include "serverfileitem.h"
 
 class MainWindow : public QMainWindow
 {
     Q_OBJECT
 
 public:
+    // Datastruktur för att spara information om varje flik
+    struct TabInfo {
+        Connection connectionInfo;
+        QString currentRemotePath;
+        QWidget* contentWidget;
+        QSplitter* splitter;
+        QTreeView* localView;
+        QLineEdit* localPathEdit;
+        QTreeView* remoteView;
+        QLineEdit* remotePathEdit;
+        QFileSystemModel* localFileModel;
+        QStandardItemModel* remoteFileModel;
+        QPushButton* uploadButton;
+        QPushButton* downloadButton;
+        
+        // Standardkonstruktor
+        TabInfo() : contentWidget(nullptr), splitter(nullptr), localView(nullptr), 
+                    localPathEdit(nullptr), remoteView(nullptr), remotePathEdit(nullptr),
+                    localFileModel(nullptr), remoteFileModel(nullptr),
+                    uploadButton(nullptr), downloadButton(nullptr) {}
+    };
+    
+    // Tematyper
+    enum ThemeType {
+        ThemeLight,
+        ThemeDark,
+        ThemeCustom
+    };
+    
+    // Handlingar för drag och drop
+    enum DragDropAction {
+        DragNone,
+        DragUpload,
+        DragDownload
+    };
+
     MainWindow(QWidget *parent = nullptr);
     ~MainWindow();
 
-protected:
-    // Händelsehanterare för drag och drop
-    bool eventFilter(QObject* watched, QEvent* event) override;
-    void dragEnterEvent(QDragEnterEvent* event) override;
-    void dragMoveEvent(QDragMoveEvent* event) override;
-    void dropEvent(QDropEvent* event) override;
-
-public slots:
-    // Temahantering
-    void setTheme(AppTheme theme);
-    void switchTheme(int themeIndex);
-    
-    // Loggfunktioner
-    void appendToLog(const QString &message);
-    void clearLog();
-
 private slots:
-    void connectToFtp();
-    void disconnectFromFtp();
+    void showConnectionDialog();
+    void connectToServer(const Connection &connection);
+    void disconnectFromServer();
+    void showAboutDialog();
     void browseLocalDirectory();
-    void updateRemoteDirectory();
+    void updateLocalDirectory(const QString &path);
+    void updateRemoteDirectory(const QString &path = QString());
     void uploadFile();
     void downloadFile();
-    void onFtpConnected();
-    void onFtpDisconnected();
-    void onFtpError(const QString &errorMessage);
     void onDirectoryListed(const QStringList &entries);
-    void onDownloadFinished(bool success);
-    void onUploadFinished(bool success);
-    void onLocalDirectorySelected(const QModelIndex &index);
-    void onRemoteDirectorySelected(const QModelIndex &index);
-    
-    // Anslutningshantering
-    void showConnectionDialog();
-    void setupConnectionDialog();
-    void loadConnection(int index);
-    void saveConnection();
-    void deleteConnection();
-    void loadSettings();
+    void onFtpCommandSent(const QString &command);
+    void clearLog();
+    void showPreferences();
     void saveSettings();
-    void updateConnectionsList();
-    void showSavedConnectionsDialog();
-    
-    // Drag och Drop
-    void handleLocalDrag(const QModelIndex &index);
-    void handleRemoteDrag(const QModelIndex &index);
-    void handleDrop(const QModelIndex &index, DragDropAction action);
+    void setTheme(ThemeType theme);
+    void addNewTab(const Connection &connection = Connection());
+    void closeTab(int index);
+    void switchTab(int index);
+    void onRemoteSelectionChanged(const QItemSelection &selected, const QItemSelection &deselected);
+    void onLocalSelectionChanged(const QItemSelection &selected, const QItemSelection &deselected);
+    void initializeFileIcons();
+    void updateTabTitle(int index, const QString &title);
+    void onTransferProgress(qint64 bytesSent, qint64 bytesTotal, const QString &file);
 
-    // Slots för överföringsframsteg
-    void onFtpUploadProgress(const QString &filePath, qint64 bytesSent, qint64 bytesTotal);
-    void onFtpDownloadProgress(const QString &filePath, qint64 bytesReceived, qint64 bytesTotal);
+protected:
+    void closeEvent(QCloseEvent *event) override;
+    void dragEnterEvent(QDragEnterEvent *event) override;
+    void dropEvent(QDropEvent *event) override;
+    void dragLeaveEvent(QDragLeaveEvent *event) override;
+    void resizeEvent(QResizeEvent *event) override;
 
 private:
-    Ui::MainWindow *ui;
+    void setupUi();
+    void createMenus();
+    void setupTab(TabInfo &tab);
+    void loadSettings();
+    QString getFileIconName(const QString &fileName, bool isDir);
+    void processFtpEntry(const QString &entry);
+    void processSftpEntry(const QString &entry);
     
-    // Hanterare för anslutningar
-    FtpManager *m_ftpManager;
-    SftpManager *m_sftpManager;
-    ConnectionType m_activeConnectionType;
+    // Flikhanteringsvariabler
+    QTabWidget* m_tabWidget;
+    int m_currentTabIndex;
+    QList<TabInfo> m_tabs;
     
-    // Modeller för lokal och fjärrfilvisning
-    QFileSystemModel *m_localFileModel;
-    QStandardItemModel *m_remoteFileModel;
-    
-    // Drag och drop-hantering
-    DragDropAction m_currentDragAction;
-    QString m_dragSourcePath;
-    
-    // Vy-komponenter
-    QTreeView *m_localView;
-    QTreeView *m_remoteView;
-    QLineEdit *m_localPathEdit;
-    QLineEdit *m_remotePathEdit;
-    QPushButton *m_uploadButton;
-    QPushButton *m_downloadButton;
+    // Loggning och statusvariabler
+    QTextEdit *m_logTextEdit;
     QProgressBar *m_progressBar;
     QLabel *m_statusLabel;
-    QTextEdit *m_logTextEdit;
-    QComboBox *m_themeComboBox;
     
-    // Anslutningsdialogens komponenter
-    QDialog *m_connectionDialog;
-    QLineEdit *m_serverInput;
-    QLineEdit *m_usernameInput;
-    QLineEdit *m_passwordInput;
-    QLineEdit *m_portInput;
-    QComboBox *m_connectionTypeCombo;
-    QListWidget *m_savedConnectionsList = nullptr;
-    QPushButton *m_connectButton;
-    QPushButton *m_disconnectButton;
+    // Anslutningshanterare
+    FtpManager *m_ftpManager;
+    SftpManager *m_sftpManager;
+    bool m_connected;
+    Connection m_currentConnection;
     
-    // Sökvägar
-    QString m_currentLocalPath;
-    QString m_currentRemotePath;
+    // Inställningar
+    QSettings m_settings;
+    ThemeType m_currentTheme;
     
-    // Lista över sparade anslutningar
-    QList<ConnectionInfo> m_savedConnections;
-    ConnectionInfo m_currentConnection;
+    // Nedladdnings-/uppladdningsindikatorer
+    DragDropAction m_currentDragAction;
     
-    // Setup-funktioner
-    void setupUi();
-    void setupModels();
-    void setupConnections();
-    void createMenus();
-    
-    // Hjälpfunktioner för UI
-    void updateUIState();
-    void populateRemoteFileModel(const QStringList &entries);
-    QString formatFileSize(qint64 bytes) const;
+    // Filtypsikoner
+    QMimeDatabase m_mimeDb;
+    QMap<QString, QIcon> m_fileTypeIcons;
 };
 
 #endif // MAINWINDOW_H

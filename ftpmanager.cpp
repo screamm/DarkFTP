@@ -1,60 +1,66 @@
 // ftpmanager.cpp
 #include "ftpmanager.h"
 
+#include <QUrl>
+#include <QDateTime>
+#include <QRegularExpression>
+#include <QFileInfo>
+#include <QDir>
+
 FtpManager::FtpManager(QObject *parent)
     : QObject(parent),
-    m_networkManager(new QNetworkAccessManager(this)),
+    m_manager(new QNetworkAccessManager(this)),
     m_port(21),
     m_connected(false),
-    m_currentReply(nullptr),
-    m_currentFile(nullptr)
+    m_currentDirectory("/"),
+    m_currentListReply(nullptr),
+    m_currentUploadReply(nullptr),
+    m_currentDownloadReply(nullptr)
 {
-    connect(m_networkManager, &QNetworkAccessManager::authenticationRequired,
+    connect(m_manager, &QNetworkAccessManager::authenticationRequired,
             this, &FtpManager::onAuthenticationRequired);
-    connect(m_networkManager, &QNetworkAccessManager::finished,
-            this, &FtpManager::onFinished);
 }
 
 FtpManager::~FtpManager()
 {
-    disconnectFromServer();
-    delete m_networkManager;
+    disconnectFromHost();
 }
 
-bool FtpManager::connectToServer(const QString &host, int port, const QString &username, const QString &password)
+void FtpManager::connectToHost(const QString &host, const QString &username, 
+                              const QString &password, quint16 port)
 {
+    // Spara anslutningsinformationen
     m_host = host;
-    m_port = port;
     m_username = username;
     m_password = password;
-
-    QUrl url;
-    url.setScheme("ftp");
-    url.setHost(host);
-    url.setPort(port);
-    url.setUserName(username);
-    url.setPassword(password);
-    url.setPath("/");
-
-    QNetworkReply *reply = m_networkManager->get(QNetworkRequest(url));
-
-    // Detta är en förenklad implementation - i en riktig klient skulle du behöva
-    // använda en eventloop eller signals/slots för att hantera den asynkrona anslutningen
-
-    // För demo-syfte antar vi att anslutningen lyckas om reply skapades
-    if (reply) {
-        m_connected = true;
-        emit connected();
-        return true;
-    } else {
-        emit error("Failed to connect to server");
-        return false;
-    }
+    m_port = port;
+    
+    // Lista roten för att testa anslutningen
+    listDirectory("/");
 }
 
-void FtpManager::disconnectFromServer()
+void FtpManager::disconnectFromHost()
 {
     if (m_connected) {
+        // Avbryt pågående överföringar
+        if (m_currentListReply) {
+            m_currentListReply->abort();
+            m_currentListReply->deleteLater();
+            m_currentListReply = nullptr;
+        }
+        
+        if (m_currentUploadReply) {
+            m_currentUploadReply->abort();
+            m_currentUploadReply->deleteLater();
+            m_currentUploadReply = nullptr;
+        }
+        
+        if (m_currentDownloadReply) {
+            m_currentDownloadReply->abort();
+            m_currentDownloadReply->deleteLater();
+            m_currentDownloadReply = nullptr;
+        }
+        
         m_connected = false;
         emit disconnected();
     }
@@ -65,141 +71,388 @@ bool FtpManager::isConnected() const
     return m_connected;
 }
 
+QString FtpManager::currentDirectory() const
+{
+    return m_currentDirectory;
+}
+
 void FtpManager::listDirectory(const QString &path)
 {
-    if (!m_connected) {
-        emit error("Not connected to server");
-        return;
+    QString dirPath = path;
+    if (dirPath.isEmpty()) {
+        dirPath = m_currentDirectory;
     }
-
-    QUrl url;
-    url.setScheme("ftp");
-    url.setHost(m_host);
-    url.setPort(m_port);
-    url.setUserName(m_username);
-    url.setPassword(m_password);
-    url.setPath(path);
-
-    QNetworkReply *reply = m_networkManager->get(QNetworkRequest(url));
-    m_currentReply = reply;
+    
+    QUrl url = createUrl(dirPath);
+    
+    QNetworkRequest request(url);
+    m_currentListReply = m_manager->get(request);
+    
+    connect(m_currentListReply, &QNetworkReply::finished, this, &FtpManager::onListFinished);
+    connect(m_currentListReply, QOverload<QNetworkReply::NetworkError>::of(&QNetworkReply::error),
+            this, &FtpManager::onNetworkError);
 }
 
-void FtpManager::downloadFile(const QString &remotePath, const QString &localPath)
+void FtpManager::uploadFile(const QString &localFilePath, const QString &remoteFilePath)
 {
-    if (!m_connected) {
-        emit error(tr("Not connected to FTP server"));
+    QFile *file = new QFile(localFilePath, this);
+    if (!file->open(QIODevice::ReadOnly)) {
+        emit error(tr("Kunde inte öppna lokal fil: %1").arg(file->errorString()));
+        file->deleteLater();
         return;
     }
-
-    QUrl url(QString("ftp://%1:%2%3").arg(m_host).arg(m_port).arg(remotePath));
-    url.setUserName(m_username);
-    url.setPassword(m_password);
-
-    QNetworkRequest request(url);
-    m_currentReply = m_networkManager->get(request);
     
-    m_currentFile = new QFile(localPath);
-    if (!m_currentFile->open(QIODevice::WriteOnly)) {
-        emit error(tr("Could not open local file for writing"));
-        return;
-    }
+    QUrl url = createUrl(remoteFilePath);
+    QNetworkRequest request(url);
+    
+    m_currentLocalUploadPath = localFilePath;
+    m_currentUploadPath = remoteFilePath;
+    
+    m_currentUploadReply = m_manager->put(request, file);
+    
+    connect(m_currentUploadReply, &QNetworkReply::uploadProgress, 
+            this, &FtpManager::onUploadProgress);
+            
+    connect(m_currentUploadReply, &QNetworkReply::finished,
+            this, &FtpManager::onUploadFinished);
+            
+    connect(m_currentUploadReply, QOverload<QNetworkReply::NetworkError>::of(&QNetworkReply::error),
+            this, &FtpManager::onNetworkError);
+    
+    // Filobjektet raderas automatiskt när svaret är klart
+    file->setParent(m_currentUploadReply);
+}
 
-    connect(m_currentReply, &QNetworkReply::readyRead, this, [this]() {
-        if (m_currentFile) {
-            m_currentFile->write(m_currentReply->readAll());
+void FtpManager::downloadFile(const QString &remoteFilePath, const QString &localFilePath)
+{
+    QUrl url = createUrl(remoteFilePath);
+    QNetworkRequest request(url);
+    
+    m_currentDownloadPath = remoteFilePath;
+    m_currentLocalDownloadPath = localFilePath;
+    
+    // Skapa katalogstruktur om den inte finns
+    QFileInfo fileInfo(localFilePath);
+    QDir dir = fileInfo.dir();
+    if (!dir.exists()) {
+        dir.mkpath(".");
+    }
+    
+    m_currentDownloadReply = m_manager->get(request);
+    
+    connect(m_currentDownloadReply, &QNetworkReply::downloadProgress,
+            this, &FtpManager::onDownloadProgress);
+            
+    connect(m_currentDownloadReply, &QNetworkReply::finished,
+            this, &FtpManager::onDownloadFinished);
+            
+    connect(m_currentDownloadReply, QOverload<QNetworkReply::NetworkError>::of(&QNetworkReply::error),
+            this, &FtpManager::onNetworkError);
+}
+
+void FtpManager::createDirectory(const QString &dirPath)
+{
+    QUrl url = createUrl(dirPath);
+    QNetworkRequest request(url);
+    
+    // För att skapa en katalog med FTP, gör en PUT med en tom fil
+    // och lägg till parametern "mkdir"
+    url.setQuery("mkdir");
+    request.setUrl(url);
+    
+    QNetworkReply *reply = m_manager->put(request, QByteArray());
+    
+    connect(reply, &QNetworkReply::finished, [=]() {
+        reply->deleteLater();
+        
+        if (reply->error() == QNetworkReply::NoError) {
+            emit directoryCreated(dirPath);
+        } else {
+            emit error(tr("Kunde inte skapa katalog: %1").arg(reply->errorString()));
         }
     });
-
-    connect(m_currentReply, &QNetworkReply::downloadProgress, this, 
-            [this, localPath](qint64 bytesReceived, qint64 bytesTotal) {
-        emit downloadProgress(localPath, bytesReceived, bytesTotal);
-    });
-
-    emit downloadStarted(QFileInfo(localPath).fileName());
+    
+    connect(reply, QOverload<QNetworkReply::NetworkError>::of(&QNetworkReply::error),
+            this, &FtpManager::onNetworkError);
 }
 
-void FtpManager::uploadFile(const QString &localPath, const QString &remotePath)
+void FtpManager::deleteFile(const QString &filePath)
 {
-    if (!m_connected) {
-        emit error(tr("Not connected to FTP server"));
-        return;
-    }
-
-    QFile file(localPath);
-    if (!file.open(QIODevice::ReadOnly)) {
-        emit error(tr("Could not open local file for reading"));
-        return;
-    }
-
-    QUrl url(QString("ftp://%1:%2%3").arg(m_host).arg(m_port).arg(remotePath));
-    url.setUserName(m_username);
-    url.setPassword(m_password);
-
+    QUrl url = createUrl(filePath);
     QNetworkRequest request(url);
-    m_currentReply = m_networkManager->put(request, &file);
-
-    connect(m_currentReply, &QNetworkReply::uploadProgress, this, 
-            [this, remotePath](qint64 bytesSent, qint64 bytesTotal) {
-        emit uploadProgress(remotePath, bytesSent, bytesTotal);
+    
+    QNetworkReply *reply = m_manager->deleteResource(request);
+    
+    connect(reply, &QNetworkReply::finished, [=]() {
+        reply->deleteLater();
+        
+        if (reply->error() == QNetworkReply::NoError) {
+            emit fileDeleted(filePath);
+        } else {
+            emit error(tr("Kunde inte radera fil: %1").arg(reply->errorString()));
+        }
     });
+    
+    connect(reply, QOverload<QNetworkReply::NetworkError>::of(&QNetworkReply::error),
+            this, &FtpManager::onNetworkError);
+}
 
-    emit uploadStarted(QFileInfo(localPath).fileName());
+void FtpManager::deleteDirectory(const QString &dirPath)
+{
+    QUrl url = createUrl(dirPath);
+    url.setQuery("rmdir");
+    QNetworkRequest request(url);
+    
+    QNetworkReply *reply = m_manager->deleteResource(request);
+    
+    connect(reply, &QNetworkReply::finished, [=]() {
+        reply->deleteLater();
+        
+        if (reply->error() == QNetworkReply::NoError) {
+            emit directoryDeleted(dirPath);
+        } else {
+            emit error(tr("Kunde inte radera katalog: %1").arg(reply->errorString()));
+        }
+    });
+    
+    connect(reply, QOverload<QNetworkReply::NetworkError>::of(&QNetworkReply::error),
+            this, &FtpManager::onNetworkError);
+}
+
+void FtpManager::rename(const QString &oldPath, const QString &newPath)
+{
+    // För att byta namn med FTP, använd kommandot "rename"
+    QUrl url = createUrl(oldPath);
+    url.setQuery("rename=" + QUrl::toPercentEncoding(newPath));
+    QNetworkRequest request(url);
+    
+    QNetworkReply *reply = m_manager->put(request, QByteArray());
+    
+    connect(reply, &QNetworkReply::finished, [=]() {
+        reply->deleteLater();
+        
+        if (reply->error() == QNetworkReply::NoError) {
+            emit renamed(oldPath, newPath);
+        } else {
+            emit error(tr("Kunde inte byta namn: %1").arg(reply->errorString()));
+        }
+    });
+    
+    connect(reply, QOverload<QNetworkReply::NetworkError>::of(&QNetworkReply::error),
+            this, &FtpManager::onNetworkError);
 }
 
 void FtpManager::onAuthenticationRequired(QNetworkReply *reply, QAuthenticator *authenticator)
 {
+    Q_UNUSED(reply);
+    
     authenticator->setUser(m_username);
     authenticator->setPassword(m_password);
 }
 
-void FtpManager::onFinished(QNetworkReply *reply)
+void FtpManager::onNetworkError(QNetworkReply::NetworkError error)
 {
-    if (reply->error() != QNetworkReply::NoError) {
-        emit error(reply->errorString());
+    QNetworkReply *reply = qobject_cast<QNetworkReply*>(sender());
+    if (reply) {
+        emit this->error(reply->errorString());
+    } else {
+        emit this->error(tr("Nätverksfel: %1").arg(error));
+    }
+}
 
-        if (m_currentFile) {
-            m_currentFile->close();
-            delete m_currentFile;
-            m_currentFile = nullptr;
-        }
+void FtpManager::onUploadProgress(qint64 bytesSent, qint64 bytesTotal)
+{
+    emit transferProgress(bytesSent, bytesTotal, m_currentUploadPath);
+}
 
-        if (reply == m_currentReply) {
-            m_currentReply = nullptr;
-        }
+void FtpManager::onDownloadProgress(qint64 bytesReceived, qint64 bytesTotal)
+{
+    emit transferProgress(bytesReceived, bytesTotal, m_currentDownloadPath);
+}
 
-        reply->deleteLater();
+void FtpManager::onListFinished()
+{
+    if (m_currentListReply->error() != QNetworkReply::NoError) {
+        emit error(tr("Fel vid listning av katalog: %1").arg(m_currentListReply->errorString()));
+        m_currentListReply->deleteLater();
+        m_currentListReply = nullptr;
         return;
     }
-
-    // Hantera olika typer av operationer
-    if (reply->operation() == QNetworkAccessManager::GetOperation) {
-        if (m_currentFile) {
-            // Detta var en filnedladdning
-            m_currentFile->close();
-            delete m_currentFile;
-            m_currentFile = nullptr;
-            emit downloadFinished(true);
-        } else {
-            // Detta var troligtvis en kataloglistning
-            QByteArray data = reply->readAll();
-            // Parsa katalogdata (detta är en enkel implementation)
-            QString listing = QString::fromUtf8(data);
-            QStringList entries = listing.split("\n", Qt::SkipEmptyParts);
-            emit directoryListed(entries);
-        }
-    } else if (reply->operation() == QNetworkAccessManager::PutOperation) {
-        // Detta var en filuppladdning
-        if (m_currentFile) {
-            m_currentFile->close();
-            delete m_currentFile;
-            m_currentFile = nullptr;
-            emit uploadFinished(true);
-        }
+    
+    // Uppdatera anslutningsstatus
+    if (!m_connected) {
+        m_connected = true;
+        emit connected();
     }
-
-    if (reply == m_currentReply) {
-        m_currentReply = nullptr;
-    }
-
-    reply->deleteLater();
+    
+    // Uppdatera aktuell katalog
+    QUrl url = m_currentListReply->url();
+    m_currentDirectory = url.path();
+    
+    // Läs och tolka svaret
+    QByteArray data = m_currentListReply->readAll();
+    QList<ServerFileItem> items = parseDirectoryListing(data);
+    
+    // Skicka signal
+    emit directoryListed(m_currentDirectory, items);
+    
+    // Städa upp
+    m_currentListReply->deleteLater();
+    m_currentListReply = nullptr;
 }
+
+void FtpManager::onUploadFinished()
+{
+    if (m_currentUploadReply->error() != QNetworkReply::NoError) {
+        emit error(tr("Fel vid uppladdning av fil: %1").arg(m_currentUploadReply->errorString()));
+    } else {
+        emit uploadFinished(m_currentUploadPath);
+    }
+    
+    // Städa upp
+    m_currentUploadReply->deleteLater();
+    m_currentUploadReply = nullptr;
+    m_currentUploadPath.clear();
+    m_currentLocalUploadPath.clear();
+}
+
+void FtpManager::onDownloadFinished()
+{
+    if (m_currentDownloadReply->error() != QNetworkReply::NoError) {
+        emit error(tr("Fel vid nedladdning av fil: %1").arg(m_currentDownloadReply->errorString()));
+    } else {
+        // Spara data till fil
+        QByteArray data = m_currentDownloadReply->readAll();
+        QFile file(m_currentLocalDownloadPath);
+        if (file.open(QIODevice::WriteOnly)) {
+            file.write(data);
+            file.close();
+            emit downloadFinished(m_currentDownloadPath);
+        } else {
+            emit error(tr("Kunde inte spara fil: %1").arg(file.errorString()));
+        }
+    }
+    
+    // Städa upp
+    m_currentDownloadReply->deleteLater();
+    m_currentDownloadReply = nullptr;
+    m_currentDownloadPath.clear();
+    m_currentLocalDownloadPath.clear();
+}
+
+QUrl FtpManager::createUrl(const QString &path) const
+{
+    QUrl url;
+    url.setScheme("ftp");
+    url.setHost(m_host);
+    
+    if (m_port != 21) {
+        url.setPort(m_port);
+    }
+    
+    QString urlPath = path;
+    if (!urlPath.startsWith('/')) {
+        urlPath = m_currentDirectory;
+        if (!urlPath.endsWith('/')) {
+            urlPath += '/';
+        }
+        urlPath += path;
+    }
+    
+    url.setPath(urlPath);
+    
+    // Lägg inte till användarinformation, den hanteras av QAuthenticator
+    
+    return url;
+}
+
+QList<ServerFileItem> FtpManager::parseDirectoryListing(const QByteArray &data) const
+{
+    QList<ServerFileItem> items;
+    
+    // FTP-listning är vanligtvis i Unix-stil:
+    // -rw-r--r-- 1 owner group    12345 Jan 01 12:34 filename.txt
+    // drwxr-xr-x 2 owner group     4096 Jan 01 12:34 directory
+    
+    QString listing = QString::fromUtf8(data);
+    QStringList lines = listing.split('\n', Qt::SkipEmptyParts);
+    
+    for (const QString &line : lines) {
+        // Ignorera icke-listningsrader (t.ex. "total 123")
+        if (line.startsWith("total ") || line.trimmed().isEmpty()) {
+            continue;
+        }
+        
+        // Tolka listningsraden
+        QRegularExpression re("^([\\-dbclps])([rwxsStT\\-]{9})\\s+"    // Permissions
+                             "(?:\\d+\\s+)?"                          // Link count (optional)
+                             "(?:[^\\s]+\\s+)?"                       // Owner (optional)
+                             "(?:[^\\s]+\\s+)?"                       // Group (optional)
+                             "(\\d+)\\s+"                            // Size
+                             "(?:(\\w{3})\\s+(\\d{1,2})\\s+"          // Month, Day
+                             "(?:(\\d{4})|([0-9:]{4,5}))\\s+|"        // Year or Time
+                             "(\\d{4})-(\\d{2})-(\\d{2})\\s+"         // ISO Date
+                             "(\\d{2}):(\\d{2})\\s+)"                 // ISO Time
+                             "(.+)$");                               // Filename
+        
+        QRegularExpressionMatch match = re.match(line);
+        
+        if (match.hasMatch()) {
+            QString permissions = match.captured(1) + match.captured(2);
+            bool isDirectory = (permissions.at(0) == 'd');
+            qint64 size = match.captured(3).toLongLong();
+            
+            QDateTime lastModified;
+            if (!match.captured(8).isEmpty()) {
+                // ISO format
+                int year = match.captured(8).toInt();
+                int month = match.captured(9).toInt();
+                int day = match.captured(10).toInt();
+                int hour = match.captured(11).toInt();
+                int minute = match.captured(12).toInt();
+                lastModified = QDateTime(QDate(year, month, day), QTime(hour, minute));
+            } else {
+                // Unix format
+                QDate date;
+                QTime time;
+                
+                QStringList months = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", 
+                                    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+                int month = months.indexOf(match.captured(4)) + 1;
+                int day = match.captured(5).toInt();
+                
+                if (!match.captured(6).isEmpty()) {
+                    // År specificerat
+                    int year = match.captured(6).toInt();
+                    date = QDate(year, month, day);
+                    time = QTime(0, 0);
+                } else {
+                    // Tid specificerad, år är nuvarande
+                    QStringList timeParts = match.captured(7).split(':');
+                    int hour = timeParts.at(0).toInt();
+                    int minute = timeParts.at(1).toInt();
+                    
+                    int year = QDate::currentDate().year();
+                    date = QDate(year, month, day);
+                    time = QTime(hour, minute);
+                    
+                    // Om datumet är i framtiden, anta förra året
+                    if (QDateTime(date, time) > QDateTime::currentDateTime().addDays(1)) {
+                        date = QDate(year - 1, month, day);
+                    }
+                }
+                
+                lastModified = QDateTime(date, time);
+            }
+            
+            QString name = match.captured(13);
+            
+            // Lägg till objektet i listan
+            ServerFileItem item(name, isDirectory, size, permissions, lastModified);
+            items.append(item);
+        }
+    }
+    
+    return items;
+}
+

@@ -89,5 +89,33 @@ Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for details.
 
 This project is licensed under the MIT License - see [LICENSE](LICENSE) file for details.
 
+## Nytt Glassmorfism-gränssnitt
+
+DarkFTP har nu ett banbrytande, modernt användargränssnitt baserat på glassmorfism-designprinciper. Den nya designen ger en visuellt tilltalande upplevelse med frostat glas-effekt, subtil skuggning och djupkänsla.
+
+### Nya funktioner i Glassmorfism-UI:
+
+- **Frostat glas-effekt** - Halvtransparenta paneler med elegant blur-effekt
+- **Animerade överföringar** - Visuellt tilltalande framstegsindikatorer
+- **Responsiv layout** - Anpassar sig dynamiskt till fönsterstorlek
+- **Elegant dra-och-släpp** - Förbättrad DnD-funktionalitet med visuell återkoppling
+- **Tema-stöd** - Modern färgpalett med stöd för anpassade teman
+
+### Tekniska förbättringar:
+
+- Implementerad med Qt QML och QtGraphicalEffects
+- Material Design-inspirerade kontroller
+- Förbättrad prestanda genom att använda Qt Quick istället för Widgets
+- Separerad design från affärslogik
+
+### Framtida utveckling:
+
+- Utveckla fler anpassade teman (ljust/mörkt/anpassat)
+- Implementera temaväxlare direkt i gränssnittet
+- Lägga till fler animationer och övergångar
+- Förbättra tillgänglighet och användarupplevelse
+
+För att testa det nya gränssnittet, bygg projektet med Qt 6.8.3 eller senare med stöd för Quick och QuickControls2-modulerna. Se 'qml/README.md' för mer information om designprinciperna och implementationen.
+
 
 

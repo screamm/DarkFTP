@@ -5,6 +5,9 @@
 #include <QDir>
 #include <QDateTime>
 #include <QRandomGenerator>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QSsh>
 
 // SftpManager-implementation
 // Detta är en simulerad implementation av SFTP-funktionalitet
@@ -12,68 +15,74 @@
 
 SftpManager::SftpManager(QObject *parent)
     : QObject(parent)
-    , m_connected(false)
+    , m_sshConnection(nullptr)
     , m_port(22)
-    , m_simulateTimer(new QTimer(this))
-    , m_progressTimer(new QTimer(this))
-    , m_totalBytes(0)
-    , m_processedBytes(0)
-    , m_isDownload(false)
-    , m_currentFile(nullptr)
+    , m_connected(false)
+    , m_currentDirectory("")
+    , m_currentListJob(0)
+    , m_currentUploadJob(0)
+    , m_currentDownloadJob(0)
+    , m_currentMkdirJob(0)
+    , m_currentRemoveFileJob(0)
+    , m_currentRemoveDirJob(0)
+    , m_currentRenameJob(0)
 {
-    // Konfigurera timer för simulerade åtgärder
-    m_simulateTimer->setSingleShot(true);
-    m_progressTimer->setInterval(200); // 200ms uppdateringsintervall för förloppsindikatorn
-    
-    connect(m_progressTimer, &QTimer::timeout, this, &SftpManager::updateTransferProgress);
 }
 
 SftpManager::~SftpManager()
 {
-    if (m_connected) {
-        disconnectFromServer();
-    }
+    disconnectFromHost();
 }
 
-bool SftpManager::connectToServer(const QString &host, int port, const QString &username, const QString &password)
+void SftpManager::connectToHost(const QString &host, const QString &username, 
+                               const QString &password, quint16 port)
 {
-    if (m_connected) {
-        disconnectFromServer();
+    if (m_connected || m_sshConnection) {
+        disconnectFromHost();
     }
     
-    emit logMessage(tr("Initierar SFTP-anslutning till %1:%2...").arg(host).arg(port));
-    
+    // Spara anslutningsinformationen
     m_host = host;
-    m_port = port;
     m_username = username;
     m_password = password;
+    m_port = port;
     
-    // Simulera anslutningsförlopp
-    QTimer::singleShot(1500, this, &SftpManager::simulateConnection);
+    // Konfigurera SSH-anslutningsparametrar
+    m_connectionParams.host = host;
+    m_connectionParams.port = port;
+    m_connectionParams.userName = username;
+    m_connectionParams.password = password;
+    m_connectionParams.authenticationType = QSsh::SshConnectionParameters::AuthenticationTypePassword;
+    m_connectionParams.timeout = 30;
+    m_connectionParams.options = QSsh::SshConnectionParameters::NoOption;
     
-    return true; // Returnera true eftersom anslutningen har påbörjats
+    // Skapa SSH-anslutning
+    m_sshConnection = new QSsh::SshConnection(m_connectionParams, this);
+    
+    // Anslut signaler
+    connect(m_sshConnection, &QSsh::SshConnection::connected, this, &SftpManager::onSshConnectionEstablished);
+    connect(m_sshConnection, &QSsh::SshConnection::error, this, &SftpManager::onSshConnectionError);
+    
+    // Starta anslutningen
+    m_sshConnection->connectToHost();
 }
 
-void SftpManager::disconnectFromServer()
+void SftpManager::disconnectFromHost()
 {
-    if (m_connected) {
-        emit logMessage(tr("Kopplar från SFTP-anslutning..."));
-        
-        // Stoppa alla pågående simuleringar
-        m_simulateTimer->stop();
-        m_progressTimer->stop();
-        
-        // Stäng fil om öppen
-        if (m_currentFile) {
-            m_currentFile->close();
-            delete m_currentFile;
-            m_currentFile = nullptr;
-        }
-        
-        m_connected = false;
-        emit disconnected();
-        emit logMessage(tr("Frånkopplad från SFTP-server"));
+    if (m_sftpChannel) {
+        m_sftpChannel->closeChannel();
+        m_sftpChannel.clear();
     }
+    
+    if (m_sshConnection) {
+        m_sshConnection->disconnectFromHost();
+        disconnect(m_sshConnection, nullptr, this, nullptr);
+        m_sshConnection->deleteLater();
+        m_sshConnection = nullptr;
+    }
+    
+    m_connected = false;
+    emit disconnected();
 }
 
 bool SftpManager::isConnected() const
@@ -81,266 +90,406 @@ bool SftpManager::isConnected() const
     return m_connected;
 }
 
+QString SftpManager::currentDirectory() const
+{
+    return m_currentDirectory;
+}
+
 void SftpManager::listDirectory(const QString &path)
 {
-    if (!m_connected) {
+    if (!m_connected || !m_sftpChannel) {
         emit error(tr("Inte ansluten till SFTP-server"));
         return;
     }
     
-    emit logMessage(tr("Listar katalog: %1").arg(path));
+    QString dirPath = path;
+    if (dirPath.isEmpty()) {
+        dirPath = m_currentDirectory.isEmpty() ? "/" : m_currentDirectory;
+    }
     
-    // Direkt simulera kataloglistan (utan fördröjning)
-    QStringList entries = generateRandomDirListing(path);
-    emit directoryListed(entries);
-    emit logMessage(tr("Kataloglistning klar: %1 (%2 objekt)").arg(path).arg(entries.size()));
+    m_currentListPath = dirPath;
+    m_currentListJob = m_sftpChannel->listDirectory(dirPath);
+    
+    connect(m_sftpChannel.data(), &QSsh::SftpChannel::fileInfoAvailable, 
+            this, &SftpManager::onListDirJobFinished);
 }
 
-void SftpManager::downloadFile(const QString &remotePath, const QString &localPath)
+void SftpManager::uploadFile(const QString &localFilePath, const QString &remoteFilePath)
 {
-    if (!m_connected) {
+    if (!m_connected || !m_sftpChannel) {
         emit error(tr("Inte ansluten till SFTP-server"));
         return;
     }
     
-    QFileInfo fileInfo(remotePath);
-    m_currentTransferFilename = fileInfo.fileName();
-    m_currentLocalPath = localPath;
-    m_currentRemotePath = remotePath;
-    m_isDownload = true;
-    
-    m_currentFile = new QFile(localPath);
-    if (!m_currentFile->open(QIODevice::WriteOnly)) {
-        emit error(tr("Kunde inte öppna lokal fil för skrivning: %1").arg(localPath));
-        delete m_currentFile;
-        m_currentFile = nullptr;
+    QFile *file = new QFile(localFilePath, this);
+    if (!file->open(QIODevice::ReadOnly)) {
+        emit error(tr("Kunde inte öppna lokal fil: %1").arg(file->errorString()));
+        file->deleteLater();
         return;
     }
     
-    emit logMessage(tr("Laddar ner fil: %1 till %2").arg(remotePath).arg(localPath));
-    emit downloadStarted(m_currentTransferFilename);
+    m_currentLocalUploadPath = localFilePath;
+    m_currentUploadPath = remoteFilePath;
+    m_currentUploadJob = m_sftpChannel->uploadFile(file->handle(), remoteFilePath, file->size());
     
-    // Simulera filstorlek: slumpmässig mellan 1MB och 20MB
-    qint64 fileSize = QRandomGenerator::global()->bounded(1024*1024, 20*1024*1024);
+    connect(m_sftpChannel.data(), &QSsh::SftpChannel::finished, 
+            this, &SftpManager::onFileUploadJobFinished);
+            
+    connect(m_sftpChannel.data(), &QSsh::SftpChannel::transferProgress, 
+            this, &SftpManager::onTransferProgress);
     
-    // Starta filöverföringssimulering
-    simulateFileTransfer(true, fileSize);
+    // Filobjektet kommer att raderas i onFileUploadJobFinished
+    file->setParent(this);
 }
 
-void SftpManager::uploadFile(const QString &localPath, const QString &remotePath)
+void SftpManager::downloadFile(const QString &remoteFilePath, const QString &localFilePath)
 {
-    if (!m_connected) {
+    if (!m_connected || !m_sftpChannel) {
         emit error(tr("Inte ansluten till SFTP-server"));
         return;
     }
     
-    QFileInfo fileInfo(localPath);
-    if (!fileInfo.exists()) {
-        emit error(tr("Lokal fil finns inte: %1").arg(localPath));
+    // Skapa katalogstruktur om den inte finns
+    QFileInfo fileInfo(localFilePath);
+    QDir dir = fileInfo.dir();
+    if (!dir.exists()) {
+        dir.mkpath(".");
+    }
+    
+    QFile *file = new QFile(localFilePath, this);
+    if (!file->open(QIODevice::WriteOnly)) {
+        emit error(tr("Kunde inte öppna lokal fil för skrivning: %1").arg(file->errorString()));
+        file->deleteLater();
         return;
     }
     
-    m_currentTransferFilename = fileInfo.fileName();
-    m_currentLocalPath = localPath;
-    m_currentRemotePath = remotePath;
-    m_isDownload = false;
+    m_currentDownloadPath = remoteFilePath;
+    m_currentLocalDownloadPath = localFilePath;
+    m_currentDownloadJob = m_sftpChannel->downloadFile(remoteFilePath, file->handle());
     
-    m_currentFile = new QFile(localPath);
-    if (!m_currentFile->open(QIODevice::ReadOnly)) {
-        emit error(tr("Kunde inte öppna lokal fil för läsning: %1").arg(localPath));
-        delete m_currentFile;
-        m_currentFile = nullptr;
-        return;
-    }
+    connect(m_sftpChannel.data(), &QSsh::SftpChannel::finished, 
+            this, &SftpManager::onFileDownloadJobFinished);
+            
+    connect(m_sftpChannel.data(), &QSsh::SftpChannel::transferProgress, 
+            this, &SftpManager::onTransferProgress);
     
-    emit logMessage(tr("Laddar upp fil: %1 till %2").arg(localPath).arg(remotePath));
-    emit uploadStarted(m_currentTransferFilename);
-    
-    // Använd faktisk filstorlek
-    qint64 fileSize = fileInfo.size();
-    
-    // Starta filöverföringssimulering
-    simulateFileTransfer(false, fileSize);
+    // Filobjektet kommer att raderas i onFileDownloadJobFinished
+    file->setParent(this);
 }
 
-void SftpManager::simulateConnection()
+void SftpManager::createDirectory(const QString &dirPath)
 {
-    // 10% sannolikhet för fel vid anslutning
-    if (QRandomGenerator::global()->bounded(100) < 10) {
-        emit error(tr("Kunde inte ansluta till SFTP-server: Anslutningen nekades"));
+    if (!m_connected || !m_sftpChannel) {
+        emit error(tr("Inte ansluten till SFTP-server"));
         return;
     }
     
+    m_currentMkdirPath = dirPath;
+    m_currentMkdirJob = m_sftpChannel->createDirectory(dirPath);
+    
+    connect(m_sftpChannel.data(), &QSsh::SftpChannel::finished, 
+            this, &SftpManager::onMkdirJobFinished);
+}
+
+void SftpManager::deleteFile(const QString &filePath)
+{
+    if (!m_connected || !m_sftpChannel) {
+        emit error(tr("Inte ansluten till SFTP-server"));
+        return;
+    }
+    
+    m_currentRemoveFilePath = filePath;
+    m_currentRemoveFileJob = m_sftpChannel->removeFile(filePath);
+    
+    connect(m_sftpChannel.data(), &QSsh::SftpChannel::finished, 
+            this, &SftpManager::onRemoveFileJobFinished);
+}
+
+void SftpManager::deleteDirectory(const QString &dirPath)
+{
+    if (!m_connected || !m_sftpChannel) {
+        emit error(tr("Inte ansluten till SFTP-server"));
+        return;
+    }
+    
+    m_currentRemoveDirPath = dirPath;
+    m_currentRemoveDirJob = m_sftpChannel->removeDirectory(dirPath);
+    
+    connect(m_sftpChannel.data(), &QSsh::SftpChannel::finished, 
+            this, &SftpManager::onRemoveDirJobFinished);
+}
+
+void SftpManager::rename(const QString &oldPath, const QString &newPath)
+{
+    if (!m_connected || !m_sftpChannel) {
+        emit error(tr("Inte ansluten till SFTP-server"));
+        return;
+    }
+    
+    m_currentRenameSrcPath = oldPath;
+    m_currentRenameDstPath = newPath;
+    m_currentRenameJob = m_sftpChannel->renameFile(oldPath, newPath);
+    
+    connect(m_sftpChannel.data(), &QSsh::SftpChannel::finished, 
+            this, &SftpManager::onRenameJobFinished);
+}
+
+void SftpManager::onSshConnectionEstablished()
+{
+    // SSH-anslutningen är upprättad, nu kan vi öppna en SFTP-kanal
+    m_sftpChannel = m_sshConnection->createSftpChannel();
+    
+    if (!m_sftpChannel) {
+        emit error(tr("Kunde inte skapa SFTP-kanal"));
+        disconnectFromHost();
+        return;
+    }
+    
+    connect(m_sftpChannel.data(), &QSsh::SftpChannel::initialized, 
+            this, &SftpManager::onSftpChannelInitialized);
+            
+    connect(m_sftpChannel.data(), &QSsh::SftpChannel::channelError, 
+            this, &SftpManager::onSftpChannelError);
+    
+    m_sftpChannel->initialize();
+}
+
+void SftpManager::onSshConnectionError(QSsh::SshError error)
+{
+    QString errorString;
+    
+    switch (error) {
+        case QSsh::SshNoError:
+            return;
+        case QSsh::SshSocketError:
+            errorString = tr("Socketfel vid anslutning");
+            break;
+        case QSsh::SshTimeoutError:
+            errorString = tr("Tidsgräns överskriden");
+            break;
+        case QSsh::SshAuthenticationError:
+            errorString = tr("Autentiseringsfel");
+            break;
+        case QSsh::SshClosedByServerError:
+            errorString = tr("Anslutningen stängdes av servern");
+            break;
+        case QSsh::SshProtocolError:
+            errorString = tr("Protokollfel");
+            break;
+        default:
+            errorString = tr("Okänt SSH-fel");
+            break;
+    }
+    
+    emit this->error(errorString);
+    disconnectFromHost();
+}
+
+void SftpManager::onSftpChannelInitialized()
+{
     m_connected = true;
     emit connected();
-    emit logMessage(tr("Ansluten till SFTP-server: %1").arg(m_host));
+    
+    // Lista roten som första åtgärd för att hämta hemkatalogen
+    listDirectory("/");
 }
 
-void SftpManager::simulateDirectoryListing(const QString &path)
+void SftpManager::onSftpChannelError(const QString &errorMessage)
 {
-    // 5% chans för fel vid kataloglistning
-    if (QRandomGenerator::global()->bounded(100) < 5) {
-        emit error(tr("Kunde inte lista katalog: %1 - Åtkomst nekad").arg(path));
+    emit error(tr("SFTP-fel: %1").arg(errorMessage));
+}
+
+void SftpManager::onListDirJobFinished(QSsh::SftpJobId job, const QList<QSsh::SftpFileInfo> &dirContent, const QString &error)
+{
+    if (job != m_currentListJob) {
         return;
     }
     
-    QStringList entries = generateRandomDirListing(path);
-    emit directoryListed(entries);
-    emit logMessage(tr("Kataloglistning klar: %1 (%2 objekt)").arg(path).arg(entries.size()));
-}
-
-void SftpManager::simulateFileTransfer(bool isDownload, qint64 fileSize)
-{
-    m_totalBytes = fileSize;
-    m_processedBytes = 0;
-    m_isDownload = isDownload;
+    disconnect(m_sftpChannel.data(), &QSsh::SftpChannel::fileInfoAvailable, 
+              this, &SftpManager::onListDirJobFinished);
     
-    // Starta förloppsindikatorn
-    m_progressTimer->start();
-}
-
-void SftpManager::updateTransferProgress()
-{
-    // Simulera dataöverföring, 200KB-600KB per uppdatering
-    qint64 chunkSize = QRandomGenerator::global()->bounded(200*1024, 600*1024);
-    m_processedBytes += chunkSize;
-    
-    if (m_processedBytes >= m_totalBytes) {
-        m_processedBytes = m_totalBytes;
-        m_progressTimer->stop();
-        
-        // 5% chans för fel under överföring
-        if (QRandomGenerator::global()->bounded(100) < 5) {
-            finishTransfer(false);
-            return;
-        }
-        
-        finishTransfer(true);
+    if (!error.isEmpty()) {
+        emit this->error(tr("Kunde inte lista katalog: %1").arg(error));
         return;
     }
     
-    // Emittera framstegssignal beroende på överföringstyp
-    if (m_isDownload) {
-        emit downloadProgress(m_currentLocalPath, m_processedBytes, m_totalBytes);
-        
-        // För nedladdningar, skriv slumpmässiga data till filen
-        if (m_currentFile) {
-            QByteArray randomData;
-            randomData.resize(chunkSize);
-            for (int i = 0; i < chunkSize; ++i) {
-                randomData[i] = QRandomGenerator::global()->bounded(256);
-            }
-            m_currentFile->write(randomData);
+    // Uppdatera aktuell katalog
+    m_currentDirectory = m_currentListPath;
+    
+    // Konvertera SFTP-filinformation till ServerFileItem
+    QList<ServerFileItem> items;
+    for (const QSsh::SftpFileInfo &fileInfo : dirContent) {
+        // Ignorera "." och ".." för att hålla konsekvent med FTP
+        if (fileInfo.name == "." || fileInfo.name == "..") {
+            continue;
         }
-    } else {
-        emit uploadProgress(m_currentRemotePath, m_processedBytes, m_totalBytes);
-        // För uppladdningar behöver vi inte göra något med filen
+        
+        items.append(convertSftpFileInfo(fileInfo));
     }
+    
+    emit directoryListed(m_currentListPath, items);
 }
 
-void SftpManager::finishTransfer(bool success)
+void SftpManager::onFileUploadJobFinished(QSsh::SftpJobId job, const QString &error)
 {
-    m_progressTimer->stop();
-    
-    if (m_currentFile) {
-        m_currentFile->close();
-        delete m_currentFile;
-        m_currentFile = nullptr;
+    if (job != m_currentUploadJob) {
+        return;
     }
     
-    if (success) {
-        if (m_isDownload) {
-            emit downloadFinished(true);
-            emit logMessage(tr("Nedladdning klar: %1").arg(m_currentTransferFilename));
-        } else {
-            emit uploadFinished(true);
-            emit logMessage(tr("Uppladdning klar: %1").arg(m_currentTransferFilename));
-        }
+    disconnect(m_sftpChannel.data(), &QSsh::SftpChannel::finished, 
+              this, &SftpManager::onFileUploadJobFinished);
+    
+    disconnect(m_sftpChannel.data(), &QSsh::SftpChannel::transferProgress, 
+              this, &SftpManager::onTransferProgress);
+    
+    if (!error.isEmpty()) {
+        emit this->error(tr("Kunde inte ladda upp fil: %1").arg(error));
     } else {
-        if (m_isDownload) {
-            emit downloadFinished(false);
-            emit error(tr("Nedladdning misslyckades: %1 - Anslutningen bröts").arg(m_currentTransferFilename));
-        } else {
-            emit uploadFinished(false);
-            emit error(tr("Uppladdning misslyckades: %1 - Anslutningen bröts").arg(m_currentTransferFilename));
-        }
-        
-        // Ta bort ofullständiga nedladdningsfiler
-        if (m_isDownload && !m_currentLocalPath.isEmpty()) {
-            QFile::remove(m_currentLocalPath);
-        }
+        emit uploadFinished(m_currentUploadPath);
     }
+    
+    m_currentUploadJob = 0;
+    m_currentUploadPath.clear();
+    m_currentLocalUploadPath.clear();
 }
 
-QStringList SftpManager::generateRandomDirListing(const QString &path)
+void SftpManager::onFileDownloadJobFinished(QSsh::SftpJobId job, const QString &error)
 {
-    QStringList entries;
-    
-    // Lägg alltid till en indikator för överliggande katalog, förutom i roten
-    if (path != "/") {
-        entries.append("..");
+    if (job != m_currentDownloadJob) {
+        return;
     }
     
-    // Standardkataloger som ska finnas i roten
-    if (path == "/") {
-        entries.append("public");
-        entries.append("private");
-        entries.append("uploads");
-        entries.append("downloads");
-        entries.append("docs");
-        entries.append("welcome.txt");
-        entries.append("readme.pdf");
-        entries.append("example.zip");
-    }
-    // Innehåll i "public"-katalogen
-    else if (path == "/public") {
-        entries.append("shared_data.csv");
-        entries.append("public_info.txt");
-        entries.append("gallery");
-        entries.append("documents");
-    }
-    // Innehåll i "private"-katalogen
-    else if (path == "/private") {
-        entries.append("personal");
-        entries.append("work");
-        entries.append("notes.txt");
-        entries.append("todo.txt");
-        entries.append("important.docx");
-    }
-    // Innehåll i "uploads"-katalogen
-    else if (path == "/uploads") {
-        entries.append("images");
-        entries.append("videos");
-        entries.append("documents");
-        entries.append("temp");
-    }
-    // Innehåll i "downloads"-katalogen
-    else if (path == "/downloads") {
-        entries.append("software");
-        entries.append("media");
-        entries.append("archives");
-        entries.append("sample_download.zip");
-    }
-    // Standardinnehåll för andra kataloger
-    else {
-        // Generera några slumpmässiga filer och mappar
-        int numEntries = QRandomGenerator::global()->bounded(5, 15);
-        
-        for (int i = 0; i < numEntries; ++i) {
-            if (QRandomGenerator::global()->bounded(2) == 0) {
-                // Mapp
-                QString folderName = QString("folder_%1").arg(QRandomGenerator::global()->bounded(1000));
-                entries.append(folderName);
-            } else {
-                // Fil
-                static const QStringList extensions = {".txt", ".pdf", ".docx", ".jpg", ".png", ".zip", ".mp3", ".mp4"};
-                QString fileName = QString("file_%1%2")
-                    .arg(QRandomGenerator::global()->bounded(1000))
-                    .arg(extensions.at(QRandomGenerator::global()->bounded(extensions.size())));
-                entries.append(fileName);
-            }
-        }
+    disconnect(m_sftpChannel.data(), &QSsh::SftpChannel::finished, 
+              this, &SftpManager::onFileDownloadJobFinished);
+    
+    disconnect(m_sftpChannel.data(), &QSsh::SftpChannel::transferProgress, 
+              this, &SftpManager::onTransferProgress);
+    
+    if (!error.isEmpty()) {
+        emit this->error(tr("Kunde inte ladda ner fil: %1").arg(error));
+    } else {
+        emit downloadFinished(m_currentDownloadPath);
     }
     
-    return entries;
+    m_currentDownloadJob = 0;
+    m_currentDownloadPath.clear();
+    m_currentLocalDownloadPath.clear();
+}
+
+void SftpManager::onTransferProgress(QSsh::SftpJobId job, quint64 bytesSent, quint64 bytesTotal)
+{
+    QString filePath;
+    
+    if (job == m_currentUploadJob) {
+        filePath = m_currentUploadPath;
+    } else if (job == m_currentDownloadJob) {
+        filePath = m_currentDownloadPath;
+    } else {
+        return;
+    }
+    
+    emit transferProgress(bytesSent, bytesTotal, filePath);
+}
+
+void SftpManager::onMkdirJobFinished(QSsh::SftpJobId job, const QString &error)
+{
+    if (job != m_currentMkdirJob) {
+        return;
+    }
+    
+    disconnect(m_sftpChannel.data(), &QSsh::SftpChannel::finished, 
+              this, &SftpManager::onMkdirJobFinished);
+    
+    if (!error.isEmpty()) {
+        emit this->error(tr("Kunde inte skapa katalog: %1").arg(error));
+    } else {
+        emit directoryCreated(m_currentMkdirPath);
+    }
+    
+    m_currentMkdirJob = 0;
+    m_currentMkdirPath.clear();
+}
+
+void SftpManager::onRemoveFileJobFinished(QSsh::SftpJobId job, const QString &error)
+{
+    if (job != m_currentRemoveFileJob) {
+        return;
+    }
+    
+    disconnect(m_sftpChannel.data(), &QSsh::SftpChannel::finished, 
+              this, &SftpManager::onRemoveFileJobFinished);
+    
+    if (!error.isEmpty()) {
+        emit this->error(tr("Kunde inte radera fil: %1").arg(error));
+    } else {
+        emit fileDeleted(m_currentRemoveFilePath);
+    }
+    
+    m_currentRemoveFileJob = 0;
+    m_currentRemoveFilePath.clear();
+}
+
+void SftpManager::onRemoveDirJobFinished(QSsh::SftpJobId job, const QString &error)
+{
+    if (job != m_currentRemoveDirJob) {
+        return;
+    }
+    
+    disconnect(m_sftpChannel.data(), &QSsh::SftpChannel::finished, 
+              this, &SftpManager::onRemoveDirJobFinished);
+    
+    if (!error.isEmpty()) {
+        emit this->error(tr("Kunde inte radera katalog: %1").arg(error));
+    } else {
+        emit directoryDeleted(m_currentRemoveDirPath);
+    }
+    
+    m_currentRemoveDirJob = 0;
+    m_currentRemoveDirPath.clear();
+}
+
+void SftpManager::onRenameJobFinished(QSsh::SftpJobId job, const QString &error)
+{
+    if (job != m_currentRenameJob) {
+        return;
+    }
+    
+    disconnect(m_sftpChannel.data(), &QSsh::SftpChannel::finished, 
+              this, &SftpManager::onRenameJobFinished);
+    
+    if (!error.isEmpty()) {
+        emit this->error(tr("Kunde inte byta namn: %1").arg(error));
+    } else {
+        emit renamed(m_currentRenameSrcPath, m_currentRenameDstPath);
+    }
+    
+    m_currentRenameJob = 0;
+    m_currentRenameSrcPath.clear();
+    m_currentRenameDstPath.clear();
+}
+
+ServerFileItem SftpManager::convertSftpFileInfo(const QSsh::SftpFileInfo &fileInfo) const
+{
+    bool isDirectory = (fileInfo.type == QSsh::SftpFileInfo::Directory);
+    QString permissions = "";
+    
+    // Skapa permissions-sträng i Unix-stil för att behålla samma gränssnitt som FTP
+    permissions += isDirectory ? "d" : "-";
+    
+    // Ägare
+    permissions += (fileInfo.permissions & QSsh::SftpFileInfo::OwnerRead) ? "r" : "-";
+    permissions += (fileInfo.permissions & QSsh::SftpFileInfo::OwnerWrite) ? "w" : "-";
+    permissions += (fileInfo.permissions & QSsh::SftpFileInfo::OwnerExec) ? "x" : "-";
+    
+    // Grupp
+    permissions += (fileInfo.permissions & QSsh::SftpFileInfo::GroupRead) ? "r" : "-";
+    permissions += (fileInfo.permissions & QSsh::SftpFileInfo::GroupWrite) ? "w" : "-";
+    permissions += (fileInfo.permissions & QSsh::SftpFileInfo::GroupExec) ? "x" : "-";
+    
+    // Alla
+    permissions += (fileInfo.permissions & QSsh::SftpFileInfo::OthersRead) ? "r" : "-";
+    permissions += (fileInfo.permissions & QSsh::SftpFileInfo::OthersWrite) ? "w" : "-";
+    permissions += (fileInfo.permissions & QSsh::SftpFileInfo::OthersExec) ? "x" : "-";
+    
+    return ServerFileItem(fileInfo.name, isDirectory, fileInfo.size, permissions, fileInfo.mtime);
 } 
