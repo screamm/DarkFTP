@@ -126,24 +126,20 @@ Rectangle {
                 hoverEnabled: true
                 acceptedButtons: Qt.LeftButton | Qt.RightButton
                 
-                onEntered: {
+                onEntered: function() {
                     hoverRect.opacity = 0.2
                 }
                 
-                onExited: {
+                onExited: function() {
                     hoverRect.opacity = 0
                 }
                 
-                onClicked: {
+                onClicked: function(mouse) {
                     fileListView.currentIndex = index
-                    
-                    // Visa kontextmeny vid högerklick
-                    if (mouse.button === Qt.RightButton) {
-                        contextMenu.popup()
-                    }
+                    if (mouse.button === Qt.RightButton) contextMenu.popup()
                 }
                 
-                onDoubleClicked: {
+                onDoubleClicked: function() {
                     fileListRoot.fileDoubleClicked(index)
                 }
                 
@@ -151,7 +147,7 @@ Rectangle {
                 drag.target: dragRect
                 drag.axis: Drag.XAndYAxis
                 
-                onPressed: {
+                onPressed: function(mouse) {
                     if (mouse.button === Qt.LeftButton) {
                         dragRect.dragFilePath = model.filePath
                         dragRect.text = model.fileName
@@ -160,7 +156,7 @@ Rectangle {
                     }
                 }
                 
-                onReleased: {
+                onReleased: function() {
                     if (drag.active) {
                         dragRect.Drag.drop()
                     }
@@ -168,7 +164,7 @@ Rectangle {
                     dragRect.dragFilePath = ""
                 }
                 
-                onPositionChanged: {
+                onPositionChanged: function(mouse) {
                     if (drag.active && !dragRect.visible) {
                         dragRect.visible = true
                         fileListRoot.fileDragged(index)

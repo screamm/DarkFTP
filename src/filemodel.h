@@ -51,6 +51,7 @@ public:
     Q_INVOKABLE bool createDirectory(const QString &name); // Ny metod
     Q_INVOKABLE bool deletePath(const QString &path);     // Ny metod
     Q_INVOKABLE bool renamePath(const QString &oldPath, const QString &newName); // Ny metod
+    Q_INVOKABLE QVariantMap get(int index) const; // Ny metod
 
     QString currentPath() const;
     bool isRemote() const;

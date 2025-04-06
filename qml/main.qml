@@ -207,11 +207,13 @@ ApplicationWindow {
                             model: localFileModel
                             
                             onFileDoubleClicked: function(index) {
-                                var itemData = localFileModel.data(localFileModel.index(index, 0), Qt.UserRole + 1)
-                                if (itemData.isDirectory) {
+                                var itemData = localFileModel.get(index)
+                                if (itemData && itemData.isDirectory) {
                                     localFileModel.navigate(itemData.filePath)
-                                } else {
+                                } else if (itemData) {
                                     console.log("Öppna fil (lokal):", itemData.filePath)
+                                } else {
+                                    console.warn("Kunde inte hämta data för index:", index)
                                 }
                             }
                             
@@ -311,11 +313,13 @@ ApplicationWindow {
                             model: remoteFileModel
                             
                             onFileDoubleClicked: function(index) {
-                                var itemData = remoteFileModel.data(remoteFileModel.index(index, 0), Qt.UserRole + 1)
-                                if (itemData.isDirectory) {
+                                var itemData = remoteFileModel.get(index)
+                                if (itemData && itemData.isDirectory) {
                                     remoteFileModel.navigate(itemData.filePath)
-                                } else {
+                                } else if (itemData) {
                                     console.log("Öppna fil (remote):", itemData.filePath)
+                                } else {
+                                    console.warn("Kunde inte hämta data för index:", index)
                                 }
                             }
                             

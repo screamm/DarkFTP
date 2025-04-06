@@ -250,6 +250,26 @@ bool FileModel::renamePath(const QString &oldPath, const QString &newName)
     }
 }
 
+// === Ny metod för att hämta all data för ett index ===
+QVariantMap FileModel::get(int index) const
+{
+    if (index < 0 || index >= m_files.count()) {
+        return QVariantMap(); // Returnera tom map om index är ogiltigt
+    }
+
+    const FileInfo &file = m_files.at(index);
+    QVariantMap map;
+    // Använd samma nycklar som rollnamnen för enkelhetens skull
+    map.insert("fileName", file.fileName);
+    map.insert("filePath", file.filePath);
+    map.insert("fileSize", data(this->index(index, 0), FileSizeRole).toString()); // Använd formaterad storlek
+    map.insert("fileDate", data(this->index(index, 0), FileDateRole).toString()); // Använd formaterad datum
+    map.insert("isDirectory", file.isDirectory);
+    // Lägg till fler egenskaper här om det behövs senare
+
+    return map;
+}
+
 // Privat metod för att faktiskt lista katalogen
 void FileModel::listDirectory(const QString &path)
 {

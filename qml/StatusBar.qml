@@ -3,163 +3,85 @@ import QtQuick.Controls 2.15
 import QtQuick.Layouts 1.15
 
 Rectangle {
-    id: statusBar
-    height: 30
-    
-    // Tillgång till tema från applikationsfönstret
-    property var theme: mainWindow.theme
-    
-    // Status properties
-    property string statusText: "Klar"
-    property string connectionStatus: "Frånkopplad"
-    property int activeTransfers: 0
-    property int queuedTransfers: 0
-    property bool isConnected: false
-    
-    // Använd temafärger för bakgrund och kanter
-    color: theme.panel
+    id: statusBarRoot
+    height: 25
+    color: theme.panel // Använder temafärg
+    border.color: theme.accent // Använder temafärg
     border.width: 1
-    border.color: theme.panelBorder
-    
+    radius: 3
+
+    property var theme: mainWindow.theme
+    property string statusText: "Redo"
+    property bool errorOccurred: false
+
     RowLayout {
         anchors.fill: parent
         anchors.leftMargin: 10
         anchors.rightMargin: 10
-        spacing: 20
-        
-        // Statusmeddelande
+
+        // Statusikon (kan användas för fel/framgång)
+        Rectangle {
+            id: statusIcon
+            width: 16
+            height: 16
+            anchors.verticalCenter: parent.verticalCenter
+            radius: 8 // Rund ikon
+            color: errorOccurred ? theme.error : theme.success
+            visible: errorOccurred // Visa bara vid fel, annars "neutral"
+            Layout.preferredWidth: 16
+        }
+
+        // Statustext
         Text {
-            text: statusBar.statusText
-            color: theme.text
+            id: statusLabel
+            text: statusBarRoot.statusText
+            color: errorOccurred ? theme.error : theme.text // Röd text vid fel
             font.pixelSize: 12
+            elide: Text.ElideRight
             Layout.fillWidth: true
+            verticalAlignment: Text.AlignVCenter
         }
-        
-        // Anslutningsstatus
-        Row {
-            spacing: 5
-            
-            Rectangle {
-                width: 8
-                height: 8
-                radius: 4
-                color: statusBar.isConnected ? "#4CAF50" : "#F44336"
-                anchors.verticalCenter: parent.verticalCenter
-            }
-            
-            Text {
-                text: statusBar.connectionStatus
-                color: theme.text
-                font.pixelSize: 12
-                anchors.verticalCenter: parent.verticalCenter
-            }
-        }
-        
-        // Överföringsindikator
-        Row {
-            spacing: 5
-            visible: statusBar.activeTransfers > 0 || statusBar.queuedTransfers > 0
-            
-            Image {
-                source: "../icons/transfer.png"
-                width: 16
-                height: 16
-                anchors.verticalCenter: parent.verticalCenter
-                
-                // Fallback om bilden inte hittas
-                Rectangle {
-                    visible: parent.status !== Image.Ready
-                    anchors.fill: parent
-                    color: "transparent"
-                    border.color: theme.accent
-                    border.width: 1
-                    
-                    Text {
-                        anchors.centerIn: parent
-                        text: "T"
-                        color: theme.accent
-                        font.pixelSize: 10
-                        font.bold: true
-                    }
-                }
-            }
-            
-            Text {
-                text: statusBar.activeTransfers + " aktiva, " + statusBar.queuedTransfers + " i kö"
-                color: theme.text
-                font.pixelSize: 12
-                anchors.verticalCenter: parent.verticalCenter
-            }
-        }
-        
-        // Tema-väljare (kan flyttas till inställningsmenyn senare)
-        ComboBox {
-            id: themeSelector
-            model: Object.keys(mainWindow.themes)
-            currentIndex: model.indexOf(mainWindow.currentThemeName)
-            Layout.preferredWidth: 120
-            
+
+        // Framstegsindikator (t.ex. för överföringar)
+        ProgressBar {
+            id: progressBar
+            visible: false // Dold som standard
+            from: 0
+            to: 100
+            value: 50 // Exempelvärde
+            Layout.preferredWidth: 150
+            anchors.verticalCenter: parent.verticalCenter
+
             background: Rectangle {
-                implicitWidth: 120
-                implicitHeight: 25
-                radius: 3
                 color: theme.listItem
-                border.width: 1
-                border.color: theme.panelBorder
+                radius: 3
             }
-            
-            contentItem: Text {
-                text: themeSelector.displayText
-                color: theme.text
-                font.pixelSize: 12
-                leftPadding: 5
-                verticalAlignment: Text.AlignVCenter
-            }
-            
-            popup: Popup {
-                y: themeSelector.height
-                width: themeSelector.width
-                implicitHeight: contentItem.implicitHeight
-                padding: 1
-                
-                contentItem: ListView {
-                    clip: true
-                    implicitHeight: contentHeight
-                    model: themeSelector.popup.visible ? themeSelector.model : null
-                    
-                    delegate: ItemDelegate {
-                        width: themeSelector.width
-                        
-                        contentItem: Text {
-                            text: modelData
-                            color: theme.text
-                            font.pixelSize: 12
-                            elide: Text.ElideRight
-                            verticalAlignment: Text.AlignVCenter
-                        }
-                        
-                        highlighted: themeSelector.highlightedIndex === index
-                        
-                        background: Rectangle {
-                            color: highlighted ? theme.accent : "transparent"
-                            opacity: highlighted ? 0.3 : 1.0
-                        }
-                    }
-                    
-                    ScrollIndicator.vertical: ScrollIndicator { }
-                }
-                
-                background: Rectangle {
-                    color: theme.panel
-                    border.color: theme.panelBorder
-                    border.width: 1
-                    radius: 3
-                }
-            }
-            
-            onActivated: {
-                mainWindow.currentThemeName = model[index];
+
+            contentItem: Rectangle {
+                color: theme.accent
+                radius: 3
             }
         }
+
+        // Ta bort QQuickImage här
+        /*
+        Image {
+            id: transferIcon
+            source: "qrc:/icons/transfer.png"
+            width: 16
+            height: 16
+            anchors.verticalCenter: parent.verticalCenter
+            visible: progressBar.visible
+            Layout.rightMargin: 5
+        }
+        */
+    }
+
+    // Återställ felstatus efter en tid
+    Timer {
+        interval: 5000 // 5 sekunder
+        running: errorOccurred
+        repeat: false
+        onTriggered: errorOccurred = false
     }
 } 
