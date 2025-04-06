@@ -2,7 +2,7 @@ import QtQuick 2.15
 import QtQuick.Window 2.15
 import QtQuick.Controls 2.15
 import QtQuick.Layouts 1.15
-import "." as DarkFTP
+import "qrc:/qml" as DarkFTPComponents
 
 ApplicationWindow {
     id: mainWindow
@@ -117,7 +117,7 @@ ApplicationWindow {
     }
     
     // Komponenter för dialogrutor
-    DarkFTP.ConnectionDialog {
+    DarkFTPComponents.ConnectionDialog {
         id: connectionDialog
         anchors.centerIn: parent
     }
@@ -128,7 +128,7 @@ ApplicationWindow {
         spacing: 0
         
         // Navigationsfält
-        DarkFTP.NavigationBar {
+        DarkFTPComponents.NavigationBar {
             id: navBar
             Layout.fillWidth: true
             Layout.preferredHeight: 50
@@ -174,55 +174,53 @@ ApplicationWindow {
                             border.width: 1
                             border.color: theme.panelBorder
                             
-                            TextInput {
-                                id: localPathInput // Behåller ID för enkelhets skull
+                            RowLayout {
                                 anchors.fill: parent
-                                anchors.leftMargin: 10
-                                anchors.rightMargin: 10
-                                verticalAlignment: Text.AlignVCenter
-                                color: theme.text
-                                text: "C:/Användare/david/Dokument" // Hårdkodad sökväg
-                                selectByMouse: true
-                                
-                                onAccepted: {
-                                    console.log("Byter lokal katalog till: " + text);
-                                    // Ingen koppling till C++-modell
+                                anchors.leftMargin: 5
+                                anchors.rightMargin: 5
+                                spacing: 5
+
+                                Button {
+                                    text: "<"
+                                    font.pixelSize: 16
+                                    width: 30
+                                    onClicked: localFileModel.goUp()
+                                    enabled: localFileModel.currentPath !== ""
+                                }
+
+                                TextInput {
+                                    id: localPathInput
+                                    Layout.fillWidth: true
+                                    text: localFileModel.currentPath
+                                    color: theme.text
+                                    font.pixelSize: 14
+                                    selectByMouse: true
+                                    onAccepted: localFileModel.navigate(text)
                                 }
                             }
                         }
                         
-                        DarkFTP.FileListView {
+                        DarkFTPComponents.FileListView {
                             id: localFileList
                             Layout.fillWidth: true
                             Layout.fillHeight: true
-                            // Borttaget: model: localFileModel
-                            // Borttaget: isRemote: false
+                            model: localFileModel
                             
-                            // Återställd exempelmodell
-                            model: ListModel {
-                                ListElement { fileName: "Dokument"; fileSize: "Mapp"; fileDate: "2023-05-10 14:30"; isDirectory: true }
-                                ListElement { fileName: "Bilder"; fileSize: "Mapp"; fileDate: "2023-05-12 09:45"; isDirectory: true }
-                                ListElement { fileName: "projekt.zip"; fileSize: "15.2 MB"; fileDate: "2023-05-15 16:20"; isDirectory: false }
-                                ListElement { fileName: "rapport.docx"; fileSize: "1.8 MB"; fileDate: "2023-05-16 10:15"; isDirectory: false }
-                                ListElement { fileName: "presentation.pptx"; fileSize: "5.4 MB"; fileDate: "2023-05-18 13:40"; isDirectory: false }
-                            }
-                            
-                            // Återställda signaler utan C++-modellinformation
                             onFileDoubleClicked: function(index) {
-                                var item = model.get(index);
-                                console.log("Local file clicked:", item.fileName, item.isDirectory ? "(directory)" : "(file)");
-                                if (item.isDirectory) {
-                                    console.log("Öppnar mapp: " + item.fileName); // Logik för att öppna mapp här
+                                var itemData = localFileModel.data(localFileModel.index(index, 0), Qt.UserRole + 1)
+                                if (itemData.isDirectory) {
+                                    localFileModel.navigate(itemData.filePath)
+                                } else {
+                                    console.log("Öppna fil (lokal):", itemData.filePath)
                                 }
                             }
                             
                             onFileDragged: function(index) {
-                                console.log("Local file dragged:", model.get(index).fileName);
+                                console.log("Local file dragged:", index)
                             }
                             
                             onFileDropped: function(sourceUrl, targetUrl) {
-                                console.log("File dropped to local:", sourceUrl, "->", targetUrl);
-                                // Implementera filöverföring här
+                                console.log("File dropped to local:", sourceUrl, "->", targetUrl)
                             }
                         }
                     }
@@ -246,7 +244,7 @@ ApplicationWindow {
                             font.bold: true
                         }
                         
-                        DarkFTP.TransferPanel {
+                        DarkFTPComponents.TransferPanel {
                             Layout.fillWidth: true
                             Layout.fillHeight: true
                         }
@@ -279,55 +277,54 @@ ApplicationWindow {
                             border.width: 1
                             border.color: theme.panelBorder
                             
-                            TextInput {
-                                id: remotePathInput // Behåller ID
+                            RowLayout {
                                 anchors.fill: parent
-                                anchors.leftMargin: 10
-                                anchors.rightMargin: 10
-                                verticalAlignment: Text.AlignVCenter
-                                color: theme.text
-                                text: "/home/user" // Hårdkodad sökväg
-                                selectByMouse: true
-                                
-                                onAccepted: {
-                                    console.log("Byter fjärrkatalog till: " + text);
-                                    // Ingen koppling till C++-modell
+                                anchors.leftMargin: 5
+                                anchors.rightMargin: 5
+                                spacing: 5
+
+                                Button {
+                                    text: "<"
+                                    font.pixelSize: 16
+                                    width: 30
+                                    onClicked: remoteFileModel.goUp()
+                                    enabled: remoteFileModel.currentPath !== "" && remoteFileModel.currentPath !== "/"
+                                }
+
+                                TextInput {
+                                    id: remotePathInput
+                                    Layout.fillWidth: true
+                                    text: remoteFileModel.currentPath
+                                    color: theme.text
+                                    font.pixelSize: 14
+                                    selectByMouse: true
+                                    onAccepted: remoteFileModel.navigate(text)
+                                    enabled: remoteFileModel.rowCount() > 0
                                 }
                             }
                         }
                         
-                        DarkFTP.FileListView {
+                        DarkFTPComponents.FileListView {
                             id: remoteFileList
                             Layout.fillWidth: true
                             Layout.fillHeight: true
-                            // Borttaget: model: remoteFileModel
-                            // Borttaget: isRemote: true
+                            model: remoteFileModel
                             
-                            // Återställd exempelmodell
-                            model: ListModel {
-                                ListElement { fileName: "public_html"; fileSize: "Mapp"; fileDate: "2023-05-10 14:30"; isDirectory: true }
-                                ListElement { fileName: "logs"; fileSize: "Mapp"; fileDate: "2023-05-12 09:45"; isDirectory: true }
-                                ListElement { fileName: "backup.zip"; fileSize: "45.7 MB"; fileDate: "2023-05-15 16:20"; isDirectory: false }
-                                ListElement { fileName: "config.json"; fileSize: "8.2 KB"; fileDate: "2023-05-16 10:15"; isDirectory: false }
-                                ListElement { fileName: "index.html"; fileSize: "12.4 KB"; fileDate: "2023-05-18 13:40"; isDirectory: false }
-                            }
-                            
-                            // Återställda signaler
                             onFileDoubleClicked: function(index) {
-                                var item = model.get(index);
-                                console.log("Remote file clicked:", item.fileName, item.isDirectory ? "(directory)" : "(file)");
-                                if (item.isDirectory) {
-                                    console.log("Öppnar fjärrmapp: " + item.fileName);
+                                var itemData = remoteFileModel.data(remoteFileModel.index(index, 0), Qt.UserRole + 1)
+                                if (itemData.isDirectory) {
+                                    remoteFileModel.navigate(itemData.filePath)
+                                } else {
+                                    console.log("Öppna fil (remote):", itemData.filePath)
                                 }
                             }
                             
                             onFileDragged: function(index) {
-                                console.log("Remote file dragged:", model.get(index).fileName);
+                                console.log("Remote file dragged:", index)
                             }
                             
                             onFileDropped: function(sourceUrl, targetUrl) {
-                                console.log("File dropped to remote:", sourceUrl, "->", targetUrl);
-                                // Implementera filöverföring här
+                                console.log("File dropped to remote:", sourceUrl, "->", targetUrl)
                             }
                         }
                     }
@@ -336,8 +333,33 @@ ApplicationWindow {
         }
         
         // Statusfält
-        DarkFTP.StatusBar {
+        DarkFTPComponents.StatusBar {
+            id: statusBar
             Layout.fillWidth: true
+        }
+    }
+
+    // Kopplingar för att uppdatera sökvägsfälten när modellen ändras
+    Connections {
+        target: localFileModel
+        function onCurrentPathChanged(path) {
+            localPathInput.text = path
+        }
+        function onError(message) {
+            statusBar.statusText = "Fel (lokal): " + message
+            statusBar.errorOccurred = true
+        }
+    }
+
+    Connections {
+        target: remoteFileModel
+        function onCurrentPathChanged(path) {
+            remotePathInput.text = path
+            remotePathInput.enabled = true
+        }
+        function onError(message) {
+            statusBar.statusText = "Fel (fjärr): " + message
+            statusBar.errorOccurred = true
         }
     }
 } 

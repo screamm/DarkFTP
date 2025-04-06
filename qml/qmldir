@@ -1,7 +1,12 @@
 module DarkFTP
+
+# QML Components
 GlassmorphismStyle 1.0 GlassmorphismStyle.qml
 FileListView 1.0 FileListView.qml
 NavigationBar 1.0 NavigationBar.qml
 TransferPanel 1.0 TransferPanel.qml
+StatusBar 1.0 StatusBar.qml
 ConnectionDialog 1.0 ConnectionDialog.qml
-StatusBar 1.0 StatusBar.qml 
+
+# Optionally, if FileModel needs specific registration beyond C++:
+# FileModel 1.0 ../src/filemodel.h # Usually not needed if registered in C++ 

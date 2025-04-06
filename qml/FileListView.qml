@@ -1,23 +1,20 @@
 import QtQuick 2.15
 import QtQuick.Controls 2.15
 import QtQuick.Layouts 1.15
+// import QtQuick.Transitions 2.15 // Tillfälligt bortkommenterad
+import DarkFTP 1.0
 
 Rectangle {
     id: fileListRoot
     color: "transparent"
     
-    // Tillgång till tema från applikationsfönstret
     property var theme: mainWindow.theme
-    
-    // Egenskaper och signaler
     property var model
     
-    // Signal för att öppna en fil/mapp
     signal fileDoubleClicked(int index)
     signal fileDragged(int index)
-    signal fileDropped(string sourceUrl, string targetUrl)
+    signal fileDropped(string sourcePath, string targetPath)
     
-    // Lista med header
     Rectangle {
         id: headerRect
         anchors.top: parent.top
@@ -27,40 +24,18 @@ Rectangle {
         color: theme.header
         radius: 3
         
-        // Filinformation i sidhuvudet
         RowLayout {
             anchors.fill: parent
             anchors.leftMargin: 8
             anchors.rightMargin: 8
             spacing: 5
             
-            Text {
-                text: "Namn"
-                font.pixelSize: 14
-                font.bold: true
-                color: theme.accent
-                Layout.preferredWidth: parent.width * 0.4
-            }
-            
-            Text {
-                text: "Storlek"
-                font.pixelSize: 14
-                font.bold: true
-                color: theme.accent
-                Layout.preferredWidth: parent.width * 0.2
-            }
-            
-            Text {
-                text: "Datum"
-                font.pixelSize: 14
-                font.bold: true
-                color: theme.accent
-                Layout.fillWidth: true
-            }
+            Text { text: "Namn"; font.pixelSize: 14; font.bold: true; color: theme.accent; Layout.preferredWidth: parent.width * 0.4 }
+            Text { text: "Storlek"; font.pixelSize: 14; font.bold: true; color: theme.accent; Layout.preferredWidth: parent.width * 0.2 }
+            Text { text: "Datum"; font.pixelSize: 14; font.bold: true; color: theme.accent; Layout.fillWidth: true }
         }
     }
     
-    // Fillista
     ListView {
         id: fileListView
         anchors.top: headerRect.bottom
@@ -71,20 +46,14 @@ Rectangle {
         clip: true
         model: fileListRoot.model
         
-        // Vertikalt rullningsfält
-        ScrollBar.vertical: ScrollBar {
-            active: true
-        }
+        ScrollBar.vertical: ScrollBar { active: true }
         
-        // Delegat för filitems
         delegate: Rectangle {
             id: delegateItem
             width: fileListView.width
             height: 30
-            // Växla mellan två färger för bättre läsbarhet
             color: index % 2 === 0 ? theme.listItem : theme.listItemAlt
             
-            // Hover-effekt
             Rectangle {
                 id: hoverRect
                 anchors.fill: parent
@@ -92,14 +61,12 @@ Rectangle {
                 opacity: 0
             }
             
-            // Filinformation för varje rad
             RowLayout {
                 anchors.fill: parent
                 anchors.leftMargin: 8
                 anchors.rightMargin: 8
                 spacing: 5
                 
-                // Filnamn med ikon
                 RowLayout {
                     spacing: 5
                     Layout.preferredWidth: parent.width * 0.4
@@ -112,13 +79,13 @@ Rectangle {
                         
                         Rectangle {
                             anchors.fill: parent
-                            color: isDirectory ? theme.accent : "transparent"
-                            opacity: isDirectory ? 0.3 : 0
+                            color: model.isDirectory ? theme.accent : "transparent"
+                            opacity: model.isDirectory ? 0.3 : 0
                             radius: 2
                             
                             Text {
                                 anchors.centerIn: parent
-                                text: isDirectory ? "D" : "F"
+                                text: model.isDirectory ? "D" : "F"
                                 color: theme.text
                                 font.pixelSize: 10
                             }
@@ -127,7 +94,7 @@ Rectangle {
                     
                     // Filnamn
                     Text {
-                        text: fileName
+                        text: model.fileName
                         font.pixelSize: 14
                         color: theme.text
                         elide: Text.ElideRight
@@ -137,7 +104,7 @@ Rectangle {
                 
                 // Filstorlek
                 Text {
-                    text: fileSize
+                    text: model.fileSize
                     font.pixelSize: 14
                     color: theme.text
                     Layout.preferredWidth: parent.width * 0.2
@@ -145,7 +112,7 @@ Rectangle {
                 
                 // Datum
                 Text {
-                    text: fileDate
+                    text: model.fileDate
                     font.pixelSize: 14
                     color: theme.text
                     Layout.fillWidth: true
@@ -186,22 +153,23 @@ Rectangle {
                 
                 onPressed: {
                     if (mouse.button === Qt.LeftButton) {
-                        dragRect.x = mouseArea.mouseX
-                        dragRect.y = mouseArea.mouseY
+                        dragRect.dragFilePath = model.filePath
+                        dragRect.text = model.fileName
+                        dragRect.x = mouseArea.mouseX - dragRect.Drag.hotSpot.x
+                        dragRect.y = mouseArea.mouseY - dragRect.Drag.hotSpot.y
                     }
                 }
                 
                 onReleased: {
-                    dragRect.Drag.drop()
-                    dragRect.x = 0
-                    dragRect.y = 0
+                    if (drag.active) {
+                        dragRect.Drag.drop()
+                    }
                     dragRect.visible = false
+                    dragRect.dragFilePath = ""
                 }
                 
-                // Dra filen om den dras mer än 20 pixlar
                 onPositionChanged: {
-                    if (drag.active) {
-                        dragRect.text = fileName
+                    if (drag.active && !dragRect.visible) {
                         dragRect.visible = true
                         fileListRoot.fileDragged(index)
                     }
@@ -219,12 +187,9 @@ Rectangle {
                 border.width: 1
                 border.color: theme.accent
                 opacity: 0.9
+                z: 1
                 
-                // För att dra och släppa
-                Drag.active: mouseArea.drag.active
-                Drag.hotSpot.x: width / 2
-                Drag.hotSpot.y: height / 2
-                
+                property string dragFilePath: ""
                 property string text: ""
                 
                 Text {
@@ -234,18 +199,16 @@ Rectangle {
                     font.pixelSize: 14
                 }
                 
+                Drag.hotSpot.x: 10
+                Drag.hotSpot.y: 10
+                
                 states: State {
-                    when: mouseArea.drag.active
-                    
+                    name: "DraggingState"
                     ParentChange {
                         target: dragRect
-                        parent: fileListRoot
-                    }
-                    
-                    AnchorChanges {
-                        target: dragRect
-                        anchors.top: undefined
-                        anchors.left: undefined
+                        parent: fileListView
+                        x: fileListView.mapFromItem(delegateItem.mouseArea, delegateItem.mouseArea.mouseX - Drag.hotSpot.x).x
+                        y: fileListView.mapFromItem(delegateItem.mouseArea, delegateItem.mouseArea.mouseY - Drag.hotSpot.y).y
                     }
                 }
             }
@@ -255,30 +218,40 @@ Rectangle {
                 id: contextMenu
                 
                 MenuItem {
-                    text: isDirectory ? "Öppna mapp" : "Öppna fil"
-                    onTriggered: {
-                        fileListRoot.fileDoubleClicked(index)
-                    }
+                    text: model.isDirectory ? "Öppna mapp" : "Öppna fil"
+                    onTriggered: fileListRoot.fileDoubleClicked(index)
+                    enabled: model.filePath
                 }
                 
                 MenuItem {
                     text: "Ladda ner/upp"
-                    onTriggered: {
-                        console.log("Laddar ner/upp: " + fileName)
-                    }
+                    onTriggered: console.log("Ladda ner/upp: " + model.fileName)
+                    enabled: model.filePath
                 }
                 
                 MenuItem {
                     text: "Döp om"
                     onTriggered: {
-                        console.log("Döp om: " + fileName)
+                        console.log("Döp om (behöver dialog): " + model.filePath)
                     }
+                    enabled: model.filePath
                 }
                 
                 MenuItem {
                     text: "Ta bort"
                     onTriggered: {
-                        console.log("Ta bort: " + fileName)
+                        console.log("Försöker ta bort: " + model.filePath)
+                        fileListRoot.model.deletePath(model.filePath)
+                    }
+                    enabled: model.filePath
+                }
+                
+                MenuSeparator {}
+                
+                MenuItem {
+                    text: "Skapa mapp här"
+                    onTriggered: {
+                        console.log("Skapa mapp här (behöver dialog) i: " + fileListRoot.model.currentPath)
                     }
                 }
             }
@@ -293,10 +266,31 @@ Rectangle {
         
         // Stöd för drop
         DropArea {
+            id: dropArea
             anchors.fill: parent
-            onDropped: {
-                console.log("Fil släppt:", drop.source.text)
-                fileListRoot.fileDropped(drop.source.text, "")
+            onDropped: (drop) => {
+                if (drop.source === dragRect && dragRect.dragFilePath !== "") {
+                    var sourcePath = dragRect.dragFilePath
+                    var targetPath = fileListRoot.model.currentPath
+                    console.log("Fil släppt internt:", sourcePath, "till", targetPath)
+                    fileListRoot.fileDropped(sourcePath, targetPath)
+                } else if (drop.hasUrls) {
+                    console.log("Externa filer släppta:", drop.urls)
+                    for (var i = 0; i < drop.urls.length; ++i) {
+                        var externalSourcePath = drop.urls[i].toString()
+                        if (externalSourcePath.startsWith("file:///")) {
+                            externalSourcePath = externalSourcePath.substring(8)
+                            if (Qt.platform.os === "windows" && externalSourcePath.length > 1 && externalSourcePath[1] === ':') {
+                            } else if (Qt.platform.os === "windows") {
+                                externalSourcePath = "/" + externalSourcePath
+                            }
+                        }
+                        console.log("  -> Behandlar:", externalSourcePath)
+                        fileListRoot.fileDropped(externalSourcePath, fileListRoot.model.currentPath)
+                    }
+                } else {
+                    console.warn("Drop utan förväntad data. Källa:", drop.source)
+                }
             }
         }
     }

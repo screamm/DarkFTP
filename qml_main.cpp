@@ -7,6 +7,7 @@
 #include <iostream>
 #include <exception>
 #include <QDir>
+#include "src/filemodel.h" // Inkludera FileModel header
 
 int main(int argc, char *argv[])
 {
@@ -30,6 +31,18 @@ int main(int argc, char *argv[])
         
         // Explicit ladda och registrera QML-komponenter
         engine.addImportPath("qrc:/");
+        
+        // Registrera FileModel för användning i QML
+        qmlRegisterType<FileModel>("DarkFTP", 1, 0, "FileModel");
+
+        // Skapa en instans av FileModel för lokala filer
+        FileModel localFileModel(false); // false indikerar att det inte är en fjärrmodell
+        // Skapa en instans för fjärrfiler (initialt tom eller inaktiv)
+        FileModel remoteFileModel(true); // true indikerar att det är en fjärrmodell
+
+        // Gör modellerna tillgängliga i QML-kontexten
+        engine.rootContext()->setContextProperty("localFileModel", &localFileModel);
+        engine.rootContext()->setContextProperty("remoteFileModel", &remoteFileModel);
         
         // Ladda QML-huvudfilen
         const QUrl url(QStringLiteral("qrc:/qml/main.qml"));
