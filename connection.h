@@ -18,12 +18,22 @@ public:
     };
     
     /**
+     * @brief Autentiseringsmetod för anslutning
+     */
+    enum AuthMethod {
+        PASSWORD,   ///< Lösenordsautentisering
+        KEY,        ///< SSH-nyckel
+        BOTH        ///< Både lösenord och nyckel
+    };
+    
+    /**
      * @brief Standardkonstruktor
      */
     Connection()
         : protocol(FTP)
         , port(0)
         , savePassword(false)
+        , authMethod(PASSWORD)
     {
     }
     
@@ -40,6 +50,29 @@ public:
         , username(username)
         , password(password)
         , savePassword(savePassword)
+        , authMethod(PASSWORD)
+        , privateKeyPath("")
+        , keyPassphrase("")
+    {
+    }
+    
+    /**
+     * @brief Konstruktor med parametrar inklusive SSH-nyckel
+     */
+    Connection(const QString &name, Protocol protocol, const QString &host, 
+               quint16 port, const QString &username, const QString &password,
+               bool savePassword, AuthMethod authMethod,
+               const QString &privateKeyPath, const QString &keyPassphrase)
+        : name(name)
+        , protocol(protocol)
+        , host(host)
+        , port(port)
+        , username(username)
+        , password(password)
+        , savePassword(savePassword)
+        , authMethod(authMethod)
+        , privateKeyPath(privateKeyPath)
+        , keyPassphrase(keyPassphrase)
     {
     }
     
@@ -90,6 +123,9 @@ public:
     QString username;        ///< Användarnamn för inloggning
     QString password;        ///< Lösenord för inloggning
     bool savePassword;       ///< Om lösenordet ska sparas
+    AuthMethod authMethod;   ///< Autentiseringsmetod
+    QString privateKeyPath;  ///< Sökväg till privat SSH-nyckel (för SFTP)
+    QString keyPassphrase;   ///< Lösenfras för SSH-nyckeln (om den är krypterad)
 };
 
 #endif // CONNECTION_H 

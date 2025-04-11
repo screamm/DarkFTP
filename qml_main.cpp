@@ -30,7 +30,7 @@ int main(int argc, char *argv[])
         qDebug() << "QML importvägar:" << engine.importPathList();
         
         // Explicit ladda och registrera QML-komponenter
-        engine.addImportPath("qrc:/");
+        engine.addImportPath(QCoreApplication::applicationDirPath());
         
         // Registrera FileModel för användning i QML
         qmlRegisterType<FileModel>("DarkFTP", 1, 0, "FileModel");
@@ -44,8 +44,8 @@ int main(int argc, char *argv[])
         engine.rootContext()->setContextProperty("localFileModel", &localFileModel);
         engine.rootContext()->setContextProperty("remoteFileModel", &remoteFileModel);
         
-        // Ladda QML-huvudfilen
-        const QUrl url(QStringLiteral("qrc:/qml/main.qml"));
+        // Ladda QML-huvudfilen från lokal sökväg
+        const QUrl url(QStringLiteral("qml/main.qml"));
         
         QObject::connect(&engine, &QQmlApplicationEngine::objectCreated,
                          &app, [url](QObject *obj, const QUrl &objUrl) {

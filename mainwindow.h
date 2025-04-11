@@ -38,6 +38,7 @@
 class MainWindow : public QMainWindow
 {
     Q_OBJECT
+    Q_PROPERTY(QString statusMessage READ statusMessage WRITE setStatusMessage NOTIFY statusMessageChanged)
 
 public:
     // Datastruktur för att spara information om varje flik
@@ -79,6 +80,14 @@ public:
     MainWindow(QWidget *parent = nullptr);
     ~MainWindow();
 
+    QString statusMessage() const;
+    void setStatusMessage(const QString &message);
+
+    Q_INVOKABLE void connectFromQml(const QString &protocolStr, const QString &host, int port, const QString &username, const QString &password);
+    Q_INVOKABLE void connectFromQmlEx(const QString &protocolStr, const QString &host, int port, 
+                                      const QString &username, const QString &password,
+                                      int authMethodInt, const QString &keyPath, const QString &keyPassphrase);
+
 private slots:
     void showConnectionDialog();
     void connectToServer(const Connection &connection);
@@ -103,6 +112,9 @@ private slots:
     void initializeFileIcons();
     void updateTabTitle(int index, const QString &title);
     void onTransferProgress(qint64 bytesSent, qint64 bytesTotal, const QString &file);
+    void onConnected();
+    void onDisconnected();
+    void onError(const QString &errorMessage);
 
 protected:
     void closeEvent(QCloseEvent *event) override;
@@ -146,6 +158,10 @@ private:
     // Filtypsikoner
     QMimeDatabase m_mimeDb;
     QMap<QString, QIcon> m_fileTypeIcons;
+    QString m_statusMessage;
+
+signals:
+    void statusMessageChanged();
 };
 
 #endif // MAINWINDOW_H

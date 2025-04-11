@@ -29,6 +29,7 @@
 #include <QRandomGenerator>
 #include <QMimeType>
 #include <QMimeDatabase>
+#include <QCryptographicHash> // Lägg till för hashning
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -40,6 +41,7 @@ MainWindow::MainWindow(QWidget *parent)
     , m_currentTheme(ThemeDark)
     , m_currentDragAction(DragNone)
     , m_settings(QSettings::IniFormat, QSettings::UserScope, "DarkFTP", "settings")
+    , m_statusMessage("Redo") // Initialisera statusmeddelande
 {
     qDebug() << "Starting MainWindow constructor";
     
@@ -51,12 +53,18 @@ MainWindow::MainWindow(QWidget *parent)
     setWindowTitle(tr("DarkFTP"));
     setWindowIcon(QIcon(":/images/darkftp_icon.png"));
     
-    // Koppla FTP-hanterarens signaler
+    // Koppla FTP-hanterarens signaler (använd befintliga slots)
+    connect(m_ftpManager, &FtpManager::connected, this, &MainWindow::onFtpConnected); // Använd onFtpConnected
+    connect(m_ftpManager, &FtpManager::disconnected, this, &MainWindow::onFtpDisconnected); // Använd onFtpDisconnected
+    connect(m_ftpManager, &FtpManager::error, this, &MainWindow::onFtpError); // Korrigera signalnamn tillbaka till 'error'
     connect(m_ftpManager, &FtpManager::commandSent, this, &MainWindow::onFtpCommandSent);
     connect(m_ftpManager, &FtpManager::directoryListed, this, &MainWindow::onDirectoryListed);
     connect(m_ftpManager, &FtpManager::transferProgress, this, &MainWindow::onTransferProgress);
     
-    // Koppla SFTP-hanterarens signaler
+    // Koppla SFTP-hanterarens signaler (använd befintliga slots)
+    connect(m_sftpManager, &SftpManager::connected, this, &MainWindow::onFtpConnected); // Använd onFtpConnected
+    connect(m_sftpManager, &SftpManager::disconnected, this, &MainWindow::onFtpDisconnected); // Använd onFtpDisconnected
+    connect(m_sftpManager, &SftpManager::error, this, &MainWindow::onFtpError); // Korrigera signalnamn tillbaka till 'error'
     connect(m_sftpManager, &SftpManager::directoryListed, this, &MainWindow::onDirectoryListed);
     connect(m_sftpManager, &SftpManager::transferProgress, this, &MainWindow::onTransferProgress);
     
@@ -258,15 +266,32 @@ void MainWindow::loadSettings()
     for (int i = 0; i < count; ++i) {
         settings.setArrayIndex(i);
         
-        ConnectionInfo info;
-        info.name = settings.value("name").toString();
-        info.type = static_cast<ConnectionType>(settings.value("type").toInt());
-        info.host = settings.value("host").toString();
-        info.port = settings.value("port").toInt();
-        info.username = settings.value("username").toString();
-        info.password = settings.value("password").toString();
+        Connection connection;
+        connection.name = settings.value("name").toString();
+        connection.protocol = static_cast<Connection::Protocol>(settings.value("type").toInt());
+        connection.host = settings.value("host").toString();
+        connection.port = settings.value("port").toInt();
+        connection.username = settings.value("username").toString();
+        connection.password = settings.value("password").toString();
         
-        m_savedConnections.append(info);
+        // Läs in auth-metod om den finns, annars anta PASSWORD
+        if (settings.contains("authMethod")) {
+            connection.authMethod = static_cast<Connection::AuthMethod>(settings.value("authMethod").toInt());
+        } else {
+            connection.authMethod = Connection::PASSWORD;
+        }
+        
+        // Läs in SSH-nyckelrelaterade fält om de finns
+        if (settings.contains("privateKeyPath")) {
+            connection.privateKeyPath = settings.value("privateKeyPath").toString();
+            
+            // Lösenfras läses in om den finns (notera att detta är ett hash, inte klartexten)
+            if (settings.contains("keyPassphrase")) {
+                connection.keyPassphrase = settings.value("keyPassphrase").toString();
+            }
+        }
+        
+        m_savedConnections.append(connection);
     }
     settings.endArray();
     
@@ -290,8 +315,27 @@ void MainWindow::saveSettings()
         settings.setValue("host", m_savedConnections[i].host);
         settings.setValue("port", m_savedConnections[i].port);
         settings.setValue("username", m_savedConnections[i].username);
-        // Spara inte lösenord i klartext i en riktig app
-        settings.setValue("password", m_savedConnections[i].password);
+        
+        // Spara lösenord (hashat)
+        if (!m_savedConnections[i].password.isEmpty()) {
+            settings.setValue("password", m_savedConnections[i].password);
+        }
+        
+        // Spara autentiseringsmetod och SSH-nyckelrelaterade fält
+        settings.setValue("authMethod", static_cast<int>(m_savedConnections[i].authMethod));
+        
+        if (!m_savedConnections[i].privateKeyPath.isEmpty()) {
+            settings.setValue("privateKeyPath", m_savedConnections[i].privateKeyPath);
+            
+            // Lösenfras bör INTE sparas i klartext, hashas eller krypteras
+            // Om lösenfrasen behöver sparas, använd liknande metod som för lösenord
+            // Alternativt: Be användaren ange lösenfrasen vid varje anslutning
+            if (!m_savedConnections[i].keyPassphrase.isEmpty()) {
+                QByteArray passphrase = m_savedConnections[i].keyPassphrase.toUtf8();
+                QByteArray passphraseHash = QCryptographicHash::hash(passphrase, QCryptographicHash::Sha256);
+                settings.setValue("keyPassphrase", passphraseHash.toBase64());
+            }
+        }
     }
     settings.endArray();
 }
@@ -574,10 +618,29 @@ void MainWindow::updateConnectionsList()
 
 void MainWindow::saveConnection()
 {
-    // Kontrollera om anslutningen redan finns
+    // Hämta lösenordet från input-fältet (om dialogen är öppen)
+    // Eller från m_currentConnection om det satts på annat sätt
+    QString plainPassword = m_passwordInput ? m_passwordInput->text() : m_currentConnection.password; 
+
+    // Hasha och Base64-koda lösenordet *endast om det inte redan är hashat*
+    // Vi antar här att ett hashat lösenord är en Base64-sträng.
+    // Ett bättre sätt vore att ha en flagga eller separat fält.
+    bool alreadyHashed = !plainPassword.isEmpty() && QByteArray::fromBase64(plainPassword.toUtf8()).size() > 0;
+    if (!plainPassword.isEmpty() && !alreadyHashed) {
+        QByteArray passwordHash = QCryptographicHash::hash(plainPassword.toUtf8(), QCryptographicHash::Sha256);
+        m_currentConnection.password = passwordHash.toBase64(); 
+        qDebug() << "Hashing password before saving connection:" << m_currentConnection.name;
+    } else if (plainPassword.isEmpty()) {
+        m_currentConnection.password = ""; // Spara tomt om inget lösenord angivits
+    } // Annars, behåll det befintliga (antagligen redan hashade) lösenordet
+
+    // Kontrollera om anslutningen redan finns (baserat på host, port, username)
     int existingIndex = -1;
     for (int i = 0; i < m_savedConnections.size(); ++i) {
-        if (m_savedConnections[i] == m_currentConnection) {
+        if (m_savedConnections[i].host == m_currentConnection.host &&
+            m_savedConnections[i].port == m_currentConnection.port &&
+            m_savedConnections[i].username == m_currentConnection.username &&
+            m_savedConnections[i].type == m_currentConnection.type) {
             existingIndex = i;
             break;
         }
@@ -590,26 +653,38 @@ void MainWindow::saveConnection()
     
     if (existingIndex >= 0) {
         // Uppdatera befintlig anslutning
+        qDebug() << "Updating existing connection:" << m_currentConnection.name;
         m_savedConnections[existingIndex] = m_currentConnection;
     } else {
         // Lägg till ny anslutning
+        qDebug() << "Adding new connection:" << m_currentConnection.name;
         m_savedConnections.append(m_currentConnection);
     }
     
     updateConnectionsList();
-    saveSettings();
+    saveSettings(); // saveSettings sparar nu den (potentiellt hashade) versionen
 }
 
 void MainWindow::loadConnection(int index)
 {
     if (index >= 0 && index < m_savedConnections.size()) {
-        m_currentConnection = m_savedConnections[index];
+        // Läs den sparade anslutningen
+        m_currentConnection = m_savedConnections[index]; 
         
-        m_serverInput->setText(m_currentConnection.host);
-        m_usernameInput->setText(m_currentConnection.username);
-        m_passwordInput->setText(m_currentConnection.password);
-        m_portInput->setText(QString::number(m_currentConnection.port));
+        // Fyll i fälten i dialogen (om den finns)
+        if (m_serverInput) m_serverInput->setText(m_currentConnection.host);
+        if (m_usernameInput) m_usernameInput->setText(m_currentConnection.username);
+        if (m_portInput) m_portInput->setText(QString::number(m_currentConnection.port));
+        if (m_connectionTypeCombo) m_connectionTypeCombo->setCurrentIndex(static_cast<int>(m_currentConnection.type));
+
+        // Lämna lösenordsfältet tomt eftersom vi bara har hashen
+        if (m_passwordInput) {
+            m_passwordInput->setPlaceholderText(tr("Lösenord sparat (hash)"));
+            m_passwordInput->clear();
+        } 
+        
         m_activeConnectionType = m_currentConnection.type;
+        qDebug() << "Loaded connection:" << m_currentConnection.name << "(Password field cleared)";
     }
 }
 
@@ -1139,44 +1214,60 @@ void MainWindow::downloadFile()
 
 void MainWindow::onFtpConnected()
 {
-    m_statusLabel->setText(tr("Ansluten"));
+    // Uppdatera både QLabel och Q_PROPERTY
+    setStatusMessage(tr("Ansluten till %1").arg(m_currentConnection.host));
     appendToLog(tr("Ansluten till %1").arg(m_currentConnection.host));
-    
-    // Aktivera knappar
-    m_uploadButton->setEnabled(true);
-    m_downloadButton->setEnabled(true);
-    
-    // Uppdatera fjärrkatalogen
-    m_remotePathEdit->setText("/");  // Sätt standardkatalog till root
-    m_currentRemotePath = "/";
-    updateRemoteDirectory();
-    
-    // Stäng anslutningsdialogrutan om den är synlig
-    if (m_connectionDialog && m_connectionDialog->isVisible()) {
-        m_connectionDialog->accept();
+
+    m_connected = true; // Uppdatera anslutningsstatus
+
+    // Aktivera UI-element (exempel från befintlig kod, kan behöva anpassas till flikar)
+    if (m_currentTabIndex >= 0 && m_currentTabIndex < m_tabs.size()) {
+        TabInfo &currentTab = m_tabs[m_currentTabIndex];
+        currentTab.uploadButton->setEnabled(true);
+        currentTab.downloadButton->setEnabled(false); // Kräver val
+        currentTab.remotePathEdit->setText("/");
     }
+
+    updateRemoteDirectory("/"); // Hämta rotkatalogen
+    updateUIState(); // Uppdatera generell UI-status
 }
 
 void MainWindow::onFtpDisconnected()
 {
-    m_statusLabel->setText(tr("Frånkopplad"));
+    // Uppdatera både QLabel och Q_PROPERTY
+    setStatusMessage(tr("Frånkopplad"));
     appendToLog(tr("Frånkopplad från servern"));
-    
-    // Inaktivera filöverföringsknappar
-    m_uploadButton->setEnabled(false);
-    m_downloadButton->setEnabled(false);
-    
-    // Rensa fjärrmodellen
-    m_remoteFileModel->clear();
-    m_remoteFileModel->setHorizontalHeaderLabels({tr("Namn"), tr("Storlek"), tr("Typ"), tr("Ändrad")});
+
+    m_connected = false; // Uppdatera anslutningsstatus
+
+    // Inaktivera UI-element och rensa vyer (exempel från befintlig kod)
+    if (m_currentTabIndex >= 0 && m_currentTabIndex < m_tabs.size()) {
+        TabInfo &currentTab = m_tabs[m_currentTabIndex];
+        currentTab.uploadButton->setEnabled(false);
+        currentTab.downloadButton->setEnabled(false);
+        if (currentTab.remoteFileModel) {
+            currentTab.remoteFileModel->clear();
+            QStringList headers;
+            headers << tr("Namn") << tr("Storlek") << tr("Typ") << tr("Ändrad") << tr("Rättigheter");
+            currentTab.remoteFileModel->setHorizontalHeaderLabels(headers);
+        }
+        // Återställ fliktitel?
+        updateTabTitle(m_currentTabIndex, tr("Ny anslutning")); // Eller behåll servernamn?
+    }
+
+    updateUIState(); // Uppdatera generell UI-status
 }
 
 void MainWindow::onFtpError(const QString &errorMessage)
 {
-    m_statusLabel->setText(tr("Fel: %1").arg(errorMessage));
+    // Uppdatera både QLabel och Q_PROPERTY
+    setStatusMessage(tr("Fel: %1").arg(errorMessage));
     appendToLog(tr("FEL: %1").arg(errorMessage));
-    
-    // Visa felmeddelande för användaren
+
+    m_connected = false; // Anta frånkoppling vid fel
+    updateUIState(); // Uppdatera UI
+
+    // Visa felmeddelande för användaren (redan befintlig logik)
     QMessageBox::critical(this, tr("Anslutningsfel"), errorMessage);
 }
 
@@ -1848,58 +1939,72 @@ void MainWindow::initializeFileIcons()
 void MainWindow::connectToServer(const Connection &connection)
 {
     if (m_currentTabIndex < 0 || m_currentTabIndex >= m_tabs.size()) {
+        qWarning() << "connectToServer called with invalid tab index:" << m_currentTabIndex;
+        // Skapa en ny flik om ingen aktiv finns?
+        // addNewTab(connection); // Kanske är bättre?
+        // Eller returnera och visa fel
+        setStatusMessage(tr("Fel: Ingen aktiv flik för anslutning."));
         return;
     }
-    
-    // Logga
-    QString logMessage = tr("Ansluter till %1 via %2...").arg(connection.host, connection.isUseSSH ? "SFTP" : "FTP");
-    m_logTextEdit->append(logMessage);
-    
+
+    // Sätt statusmeddelande INNAN anslutningsförsök
+    setStatusMessage(tr("Ansluter till %1 via %2...").arg(connection.host, Connection::protocolToString(connection.protocol)));
+    appendToLog(tr("Försöker ansluta till %1 via %2...").arg(connection.host, Connection::protocolToString(connection.protocol)));
+
     // Spara anslutningsinformation i nuvarande flik
+    m_currentConnection = connection; // Spara som den *aktuella* globala anslutningen
     m_tabs[m_currentTabIndex].connectionInfo = connection;
-    m_currentConnection = connection;
-    
+
     // Uppdatera fliktitel
     updateTabTitle(m_currentTabIndex, connection.name.isEmpty() ? connection.host : connection.name);
-    
-    // Rensa fjärrvyn
-    if (m_tabs[m_currentTabIndex].remoteFileModel) {
-        m_tabs[m_currentTabIndex].remoteFileModel->clear();
-        QStringList headers;
-        headers << tr("Namn") << tr("Storlek") << tr("Typ") << tr("Ändrad") << tr("Rättigheter");
-        m_tabs[m_currentTabIndex].remoteFileModel->setHorizontalHeaderLabels(headers);
-    }
-    
+
+    // Rensa fjärrvyn (redan i onFtpDisconnected/onFtpConnected)
+    // if (m_tabs[m_currentTabIndex].remoteFileModel) { ... }
+
+    bool success = false;
     // Anslut med rätt protokoll
-    if (connection.isUseSSH) {
-        // SFTP-anslutning
-        m_sftpManager->connectToHost(
+    if (connection.protocol == Connection::SFTP) {
+        qDebug() << "Attempting SFTP connection to" << connection.host << connection.port;
+        success = m_sftpManager->connectToHost(
             connection.host,
             connection.username,
             connection.password,
             connection.port
         );
-    } else {
-        // FTP-anslutning
-        m_ftpManager->connectToHost(
+    } else { // Anta FTP
+        qDebug() << "Attempting FTP connection to" << connection.host << connection.port;
+        success = m_ftpManager->connectToHost(
             connection.host,
             connection.username,
             connection.password,
             connection.port
         );
     }
-    
-    // Uppdatera status
-    m_connected = true;
-    m_statusLabel->setText(tr("Ansluten till %1").arg(connection.host));
-    
-    // Aktivera knappar i nuvarande flik
-    m_tabs[m_currentTabIndex].uploadButton->setEnabled(true);
-    m_tabs[m_currentTabIndex].downloadButton->setEnabled(false);
-    
-    // Sätt initial fjärrkatalog
-    m_tabs[m_currentTabIndex].remotePathEdit->setText("/");
-    updateRemoteDirectory("/");
+
+    if (!success) {
+        // Omedelbart fel (t.ex. ogiltiga parametrar innan signal/slot)
+        QString errorMsg = tr("Kunde inte initiera anslutning.");
+        setStatusMessage(errorMsg);
+        appendToLog(tr("FEL: %1").arg(errorMsg));
+        QMessageBox::critical(this, tr("Anslutningsfel"), errorMsg);
+        m_connected = false;
+        updateUIState();
+    } else {
+        // Väntar nu på signalerna connected() eller errorOccurred()
+        qDebug() << "Connection attempt initiated for" << connection.host;
+    }
+
+    // Uppdatera status (tas nu om hand av slots onFtpConnected/onFtpDisconnected/onFtpError)
+    // m_connected = true; // Görs i onFtpConnected
+    // m_statusLabel->setText(...); // Görs i setStatusMessage
+
+    // Aktivera knappar (tas nu om hand av slots)
+    // m_tabs[m_currentTabIndex].uploadButton->setEnabled(true); // Görs i onFtpConnected
+    // m_tabs[m_currentTabIndex].downloadButton->setEnabled(false);
+
+    // Sätt initial fjärrkatalog (tas nu om hand av onFtpConnected)
+    // m_tabs[m_currentTabIndex].remotePathEdit->setText("/");
+    // updateRemoteDirectory("/");
 }
 
 // Implementera frånkoppling från server
@@ -2299,3 +2404,198 @@ void MainWindow::saveSettings()
     // Spara fönsterposition och storlek
     m_settings.setValue("geometry", saveGeometry());
     
+    // Spara tema
+    // Kommentera bort raden som hänvisar till m_themeComboBox
+    //settings.setValue("theme", m_themeComboBox->currentIndex());
+    
+    // Spara anslutningar
+    settings.beginWriteArray("connections");
+    for (int i = 0; i < m_savedConnections.size(); ++i) {
+        settings.setArrayIndex(i);
+        settings.setValue("name", m_savedConnections[i].name);
+        settings.setValue("type", static_cast<int>(m_savedConnections[i].type));
+        settings.setValue("host", m_savedConnections[i].host);
+        settings.setValue("port", m_savedConnections[i].port);
+        settings.setValue("username", m_savedConnections[i].username);
+        
+        // Spara lösenord (hashat)
+        if (!m_savedConnections[i].password.isEmpty()) {
+            settings.setValue("password", m_savedConnections[i].password);
+        }
+        
+        // Spara autentiseringsmetod och SSH-nyckelrelaterade fält
+        settings.setValue("authMethod", static_cast<int>(m_savedConnections[i].authMethod));
+        
+        if (!m_savedConnections[i].privateKeyPath.isEmpty()) {
+            settings.setValue("privateKeyPath", m_savedConnections[i].privateKeyPath);
+            
+            // Lösenfras bör INTE sparas i klartext, hashas eller krypteras
+            // Om lösenfrasen behöver sparas, använd liknande metod som för lösenord
+            // Alternativt: Be användaren ange lösenfrasen vid varje anslutning
+            if (!m_savedConnections[i].keyPassphrase.isEmpty()) {
+                QByteArray passphrase = m_savedConnections[i].keyPassphrase.toUtf8();
+                QByteArray passphraseHash = QCryptographicHash::hash(passphrase, QCryptographicHash::Sha256);
+                settings.setValue("keyPassphrase", passphraseHash.toBase64());
+            }
+        }
+    }
+    settings.endArray();
+}
+
+// Implementera accessorer för statusMessage
+QString MainWindow::statusMessage() const
+{
+    return m_statusMessage;
+}
+
+void MainWindow::setStatusMessage(const QString &message)
+{
+    if (m_statusMessage != message)
+    {
+        m_statusMessage = message;
+        emit statusMessageChanged();
+        // Uppdatera även den gamla QLabel om den finns
+        if (m_statusLabel)
+        {
+            m_statusLabel->setText(message);
+        }
+    }
+}
+
+// Implementera Q_INVOKABLE metod för anslutning från QML
+void MainWindow::connectFromQml(const QString &protocolStr, const QString &host, int port, const QString &username, const QString &password)
+{
+    Connection connection;
+    connection.protocol = Connection::stringToProtocol(protocolStr);
+    connection.host = host;
+    connection.port = static_cast<quint16>(port);
+    connection.username = username;
+    connection.password = password; // Anta klartext från QML-dialogen
+    connection.name = host;         
+    connection.savePassword = false; 
+
+    setStatusMessage(tr("Ansluter till %1...").arg(host));
+    connectToServer(connection); // Skickar klartextlösenord
+}
+
+// Implementera den utökade metoden för att ansluta från QML med SSH-nyckelstöd
+void MainWindow::connectFromQmlEx(const QString &protocolStr, const QString &host, int port, 
+                                 const QString &username, const QString &password,
+                                 int authMethodInt, const QString &keyPath, const QString &keyPassphrase)
+{
+    Connection connection;
+    connection.protocol = Connection::stringToProtocol(protocolStr);
+    connection.host = host;
+    connection.port = static_cast<quint16>(port);
+    connection.username = username;
+    connection.password = password;
+    connection.name = host;
+    connection.savePassword = false;
+    
+    // Konvertera authMethodInt till Connection::AuthMethod
+    connection.authMethod = static_cast<Connection::AuthMethod>(authMethodInt); // 0=PASSWORD, 1=KEY, 2=BOTH
+    
+    // SSH-nyckelrelaterade fält
+    connection.privateKeyPath = keyPath;
+    connection.keyPassphrase = keyPassphrase;
+    
+    // Logga till konsol för felsökning
+    qDebug() << "Anslutningsförsök med:" 
+              << "protokoll=" << protocolStr
+              << "host=" << host 
+              << "port=" << port
+              << "användarnamn=" << username
+              << "authMethod=" << authMethodInt
+              << "använder nyckel=" << !keyPath.isEmpty();
+    
+    setStatusMessage(tr("Ansluter till %1 med %2...").arg(host, 
+                     (connection.authMethod == Connection::PASSWORD) ? "lösenord" : 
+                     (connection.authMethod == Connection::KEY) ? "SSH-nyckel" : 
+                     "lösenord och SSH-nyckel"));
+    
+    connectToServer(connection);
+}
+
+void MainWindow::connectToServer(const Connection &connection)
+{
+    if (m_currentTabIndex < 0 || m_currentTabIndex >= m_tabs.size()) {
+        qWarning() << "connectToServer called with invalid tab index:" << m_currentTabIndex;
+        setStatusMessage(tr("Fel: Ingen aktiv flik för anslutning."));
+        return;
+    }
+
+    // Sätt statusmeddelande INNAN anslutningsförsök
+    QString authMethod = "lösenord";
+    if (connection.protocol == Connection::SFTP) {
+        if (connection.authMethod == Connection::KEY) {
+            authMethod = "SSH-nyckel";
+        } else if (connection.authMethod == Connection::BOTH) {
+            authMethod = "lösenord och SSH-nyckel";
+        }
+    }
+    
+    setStatusMessage(tr("Ansluter till %1 via %2 med %3...").arg(
+                     connection.host, 
+                     Connection::protocolToString(connection.protocol),
+                     authMethod));
+                     
+    appendToLog(tr("Försöker ansluta till %1 via %2 med %3...").arg(
+                 connection.host, 
+                 Connection::protocolToString(connection.protocol),
+                 authMethod));
+
+    // Spara anslutningsinformation i nuvarande flik
+    m_currentConnection = connection; // Spara som den *aktuella* globala anslutningen
+    m_tabs[m_currentTabIndex].connectionInfo = connection;
+
+    // Uppdatera fliktitel
+    updateTabTitle(m_currentTabIndex, connection.name.isEmpty() ? connection.host : connection.name);
+
+    bool success = false;
+    // Anslut med rätt protokoll
+    if (connection.protocol == Connection::SFTP) {
+        qDebug() << "Initierar SFTP-anslutning till" << connection.host << connection.port;
+        
+        // För SFTP, kontrollera om vi ska använda SSH-nyckel
+        if (connection.authMethod == Connection::KEY || connection.authMethod == Connection::BOTH) {
+            qDebug() << "Använder SSH-nyckel:" << connection.privateKeyPath;
+            success = m_sftpManager->connectToHostWithKey(
+                connection.host,
+                connection.username,
+                connection.privateKeyPath,
+                connection.keyPassphrase,
+                connection.password, // Lösenord används även vid BOTH
+                connection.port
+            );
+        } else {
+            // Standardanslutning med lösenord
+            success = m_sftpManager->connectToHost(
+                connection.host,
+                connection.username,
+                connection.password,
+                connection.port
+            );
+        }
+    } else { // Anta FTP
+        qDebug() << "Initierar FTP-anslutning till" << connection.host << connection.port;
+        success = m_ftpManager->connectToHost(
+            connection.host,
+            connection.username,
+            connection.password,
+            connection.port
+        );
+    }
+
+    if (!success) {
+        // Omedelbart fel (t.ex. ogiltiga parametrar innan signal/slot)
+        QString errorMsg = tr("Kunde inte initiera anslutning.");
+        setStatusMessage(errorMsg);
+        appendToLog(tr("FEL: %1").arg(errorMsg));
+        QMessageBox::critical(this, tr("Anslutningsfel"), errorMsg);
+        m_connected = false;
+        updateUIState();
+    } else {
+        // Väntar nu på signalerna connected() eller error()
+        qDebug() << "Anslutningsförsök initierat för" << connection.host;
+    }
+}

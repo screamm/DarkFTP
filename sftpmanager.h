@@ -36,6 +36,20 @@ public:
                        const QString &password, quint16 port = 22);
     
     /**
+     * @brief Anslut till SFTP-server med SSH-nyckel
+     * @param host Värdnamn eller IP-adress
+     * @param username Användarnamn
+     * @param privateKeyPath Sökväg till privat SSH-nyckel
+     * @param passphrase Lösenfras för SSH-nyckeln (om den är krypterad)
+     * @param password Lösenord (används endast om nyckelautentisering misslyckas)
+     * @param port Port (standard: 22)
+     * @return true om anslutningsförsöket kunde initieras, annars false
+     */
+    bool connectToHostWithKey(const QString &host, const QString &username,
+                            const QString &privateKeyPath, const QString &passphrase,
+                            const QString &password, quint16 port = 22);
+    
+    /**
      * @brief Koppla från SFTP-server
      */
     void disconnectFromHost();

@@ -3,15 +3,19 @@ import QtQuick.Controls 2.15
 import QtQuick.Layouts 1.15
 
 Rectangle {
-    id: statusBarRoot
-    height: 25
-    color: theme.panel // Använder temafärg
-    border.color: theme.accent // Använder temafärg
-    border.width: 1
-    radius: 3
-
-    property var theme: mainWindow.theme
-    property string statusText: "Redo"
+    id: statusBar
+    width: parent.width
+    height: 30
+    color: Qt.darker("#2d2d30", 1.3) // Mörkt tema, matchande Windows Dark Theme
+    
+    // Default tema om inget skickas från parent
+    property var theme: {
+        "text": "#f0f0f0",
+        "error": "#ff6347",
+        "success": "#5cb85c"
+    }
+    
+    property string statusMessage: "Redo"
     property bool errorOccurred: false
 
     RowLayout {
@@ -22,24 +26,23 @@ Rectangle {
         // Statusikon (kan användas för fel/framgång)
         Rectangle {
             id: statusIcon
-            width: 16
-            height: 16
-            anchors.verticalCenter: parent.verticalCenter
-            radius: 8 // Rund ikon
-            color: errorOccurred ? theme.error : theme.success
-            visible: errorOccurred // Visa bara vid fel, annars "neutral"
             Layout.preferredWidth: 16
+            Layout.preferredHeight: 16
+            Layout.alignment: Qt.AlignVCenter
+            radius: 8 // Rund ikon
+            color: errorOccurred ? (theme.error || "#ff6347") : (theme.success || "#5cb85c")
+            visible: errorOccurred // Visa bara vid fel, annars "neutral"
         }
 
         // Statustext
         Text {
             id: statusLabel
-            text: statusBarRoot.statusText
-            color: errorOccurred ? theme.error : theme.text // Röd text vid fel
+            text: statusMessage
+            color: theme.text
             font.pixelSize: 12
             elide: Text.ElideRight
             Layout.fillWidth: true
-            verticalAlignment: Text.AlignVCenter
+            Layout.alignment: Qt.AlignVCenter
         }
 
         // Framstegsindikator (t.ex. för överföringar)
@@ -50,31 +53,18 @@ Rectangle {
             to: 100
             value: 50 // Exempelvärde
             Layout.preferredWidth: 150
-            anchors.verticalCenter: parent.verticalCenter
+            Layout.alignment: Qt.AlignVCenter
 
             background: Rectangle {
-                color: theme.listItem
+                color: theme.listItem || "#333333"
                 radius: 3
             }
 
             contentItem: Rectangle {
-                color: theme.accent
+                color: theme.accent || "#4d79ff"
                 radius: 3
             }
         }
-
-        // Ta bort QQuickImage här
-        /*
-        Image {
-            id: transferIcon
-            source: "qrc:/icons/transfer.png"
-            width: 16
-            height: 16
-            anchors.verticalCenter: parent.verticalCenter
-            visible: progressBar.visible
-            Layout.rightMargin: 5
-        }
-        */
     }
 
     // Återställ felstatus efter en tid

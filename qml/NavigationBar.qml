@@ -138,9 +138,28 @@ Rectangle {
             
             onClicked: {
                 if (serverComboBox.currentIndex >= 0) {
-                    console.log("Ansluter till server: " + savedServers[serverComboBox.currentIndex].name);
+                    var selectedServer = savedServers[serverComboBox.currentIndex];
+                    console.log("Ansluter till sparad server: " + selectedServer.name);
+                    
+                    // Hämta autentiseringsmetod och värden från den sparade servern
+                    var authMethod = selectedServer.authMethod !== undefined ? selectedServer.authMethod : 0; // Default PASSWORD
+                    var keyPath = selectedServer.privateKeyPath !== undefined ? selectedServer.privateKeyPath : "";
+                    var keyPassphrase = selectedServer.keyPassphrase !== undefined ? selectedServer.keyPassphrase : "";
+                    
+                    // Anropa backend med information från den sparade servern och nyckelinformation
+                    backend.connectFromQmlEx(
+                        selectedServer.protocol, 
+                        selectedServer.host, 
+                        selectedServer.port, 
+                        selectedServer.username, 
+                        selectedServer.password,
+                        authMethod,
+                        keyPath,
+                        keyPassphrase
+                    );
                 } else {
                     // Öppna anslutningsdialogrutan om ingen server är vald
+                    console.log("Ingen server vald, öppnar anslutningsdialog.");
                     navigationBar.connectRequested();
                 }
             }

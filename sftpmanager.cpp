@@ -67,6 +67,74 @@ void SftpManager::connectToHost(const QString &host, const QString &username,
     m_sshConnection->connectToHost();
 }
 
+bool SftpManager::connectToHostWithKey(const QString &host, const QString &username,
+                                     const QString &privateKeyPath, const QString &passphrase,
+                                     const QString &password, quint16 port)
+{
+    if (m_connected || m_sshConnection) {
+        disconnectFromHost();
+    }
+    
+    // Kontrollera att nyckelfilen finns
+    QFileInfo keyFileInfo(privateKeyPath);
+    if (!keyFileInfo.exists() || !keyFileInfo.isReadable()) {
+        emit error(tr("SSH-nyckelfil finns inte eller är inte läsbar: %1").arg(privateKeyPath));
+        return false;
+    }
+    
+    // Spara anslutningsinformationen
+    m_host = host;
+    m_username = username;
+    m_password = password; // Endast för fallback-autentisering
+    m_port = port;
+    
+    // Konfigurera SSH-anslutningsparametrar
+    m_connectionParams.host = host;
+    m_connectionParams.port = port;
+    m_connectionParams.userName = username;
+    
+    // Ställ in nyckelbaserad autentisering
+    if (!password.isEmpty()) {
+        // Använd både lösenord och nyckel om båda anges
+        m_connectionParams.authenticationType = QSsh::SshConnectionParameters::AuthenticationTypeAll;
+        m_connectionParams.password = password;
+    } else {
+        // Använd endast nyckel
+        m_connectionParams.authenticationType = QSsh::SshConnectionParameters::AuthenticationTypePublicKey;
+    }
+    
+    // Sätt sökväg till privat nyckel och lösenfras
+    m_connectionParams.privateKeyFile = privateKeyPath;
+    
+    if (!passphrase.isEmpty()) {
+        m_connectionParams.passphrase = passphrase;
+    }
+    
+    m_connectionParams.timeout = 30;
+    m_connectionParams.options = QSsh::SshConnectionParameters::NoOption;
+    
+    // Logga till konsol för felsökning
+    qDebug() << "Ansluter till SFTP med nyckel:"
+             << "host=" << host
+             << "port=" << port
+             << "username=" << username
+             << "keyPath=" << privateKeyPath
+             << "hasPassphrase=" << !passphrase.isEmpty()
+             << "hasPassword=" << !password.isEmpty();
+    
+    // Skapa SSH-anslutning
+    m_sshConnection = new QSsh::SshConnection(m_connectionParams, this);
+    
+    // Anslut signaler
+    connect(m_sshConnection, &QSsh::SshConnection::connected, this, &SftpManager::onSshConnectionEstablished);
+    connect(m_sshConnection, &QSsh::SshConnection::error, this, &SftpManager::onSshConnectionError);
+    
+    // Starta anslutningen
+    m_sshConnection->connectToHost();
+    
+    return true;
+}
+
 void SftpManager::disconnectFromHost()
 {
     if (m_sftpChannel) {

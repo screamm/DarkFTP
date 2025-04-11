@@ -2,7 +2,7 @@ import QtQuick 2.15
 import QtQuick.Window 2.15
 import QtQuick.Controls 2.15
 import QtQuick.Layouts 1.15
-import "qrc:/qml" as DarkFTPComponents
+import DarkFTP 1.0
 
 ApplicationWindow {
     id: mainWindow
@@ -116,10 +116,13 @@ ApplicationWindow {
         }
     }
     
-    // Komponenter för dialogrutor
-    DarkFTPComponents.ConnectionDialog {
+    // Lägg till dialog för anslutning
+    ConnectionDialog {
         id: connectionDialog
+        parent: Overlay.overlay
         anchors.centerIn: parent
+        visible: false
+        theme: mainWindow.theme
     }
     
     // Huvudlayout
@@ -128,7 +131,7 @@ ApplicationWindow {
         spacing: 0
         
         // Navigationsfält
-        DarkFTPComponents.NavigationBar {
+        NavigationBar {
             id: navBar
             Layout.fillWidth: true
             Layout.preferredHeight: 50
@@ -200,7 +203,7 @@ ApplicationWindow {
                             }
                         }
                         
-                        DarkFTPComponents.FileListView {
+                        FileListView {
                             id: localFileList
                             Layout.fillWidth: true
                             Layout.fillHeight: true
@@ -246,7 +249,7 @@ ApplicationWindow {
                             font.bold: true
                         }
                         
-                        DarkFTPComponents.TransferPanel {
+                        TransferPanel {
                             Layout.fillWidth: true
                             Layout.fillHeight: true
                         }
@@ -306,7 +309,7 @@ ApplicationWindow {
                             }
                         }
                         
-                        DarkFTPComponents.FileListView {
+                        FileListView {
                             id: remoteFileList
                             Layout.fillWidth: true
                             Layout.fillHeight: true
@@ -337,9 +340,11 @@ ApplicationWindow {
         }
         
         // Statusfält
-        DarkFTPComponents.StatusBar {
+        StatusBar {
             id: statusBar
             Layout.fillWidth: true
+            theme: mainWindow.theme
+            statusMessage: "Redo att ansluta"
         }
     }
 

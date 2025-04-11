@@ -1,10 +1,14 @@
 // main.cpp
 #include <QGuiApplication>
 #include <QQmlApplicationEngine>
+#include <QQmlContext>
 #include <QQuickStyle>
 #include <QDebug>
+#include <QDir>
+#include <QCoreApplication>
 #include <iostream>
 #include <exception>
+#include "mainwindow.h"
 
 int main(int argc, char *argv[])
 {
@@ -14,19 +18,37 @@ int main(int argc, char *argv[])
         // Sätt Material-stil på kontroller
         QQuickStyle::setStyle("Material");
         
-        // Skapa QML-motorn och ladda huvudfilen
+        // Skapa MainWindow-instans
+        MainWindow mainWindow;
+        
+        // QML-motorn
         QQmlApplicationEngine engine;
         
-        // Registrera C++-objekt som ska vara tillgängliga i QML här
-        // ex: qmlRegisterType<FtpManager>("FtpComponents", 1, 0, "FtpManager");
+        // Sökväg till byggkatalogen där QML-filerna finns
+        QDir appDir(QCoreApplication::applicationDirPath());
+        QString qmlPath = appDir.absolutePath() + "/qml";
+        
+        // Lägg till sökvägen till QML-importsökvägar
+        engine.addImportPath(appDir.absolutePath());
+        
+        // Debug-utskrifter
+        qDebug() << "Arbetskatalog:" << QDir::currentPath();
+        qDebug() << "App sökväg:" << appDir.absolutePath();
+        qDebug() << "QML importvägar:" << engine.importPathList();
+        
+        // Exponera MainWindow-instansen till QML
+        engine.rootContext()->setContextProperty("backend", &mainWindow);
         
         // Ladda QML-huvudfilen
-        const QUrl url(QStringLiteral("qrc:/qml/main.qml"));
+        const QUrl url(appDir.absolutePath() + "/qml/main.qml");
+        qDebug() << "Laddar QML från:" << url.toString();
         
         QObject::connect(&engine, &QQmlApplicationEngine::objectCreated,
                          &app, [url](QObject *obj, const QUrl &objUrl) {
-            if (!obj && url == objUrl)
+            if (!obj && url == objUrl) {
+                qDebug() << "Misslyckades med att skapa QML-objekt";
                 QCoreApplication::exit(-1);
+            }
         }, Qt::QueuedConnection);
         
         engine.load(url);
