@@ -1,5 +1,8 @@
 module DarkFTP
 
+# Singleton Components
+singleton ThemeManager 1.0 ThemeManager.qml
+
 # QML Components
 GlassmorphismStyle 1.0 GlassmorphismStyle.qml
 FileListView 1.0 FileListView.qml

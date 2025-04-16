@@ -8,12 +8,16 @@ Rectangle {
     id: fileListRoot
     color: "transparent"
     
-    property var theme: mainWindow.theme
+    // Använd ThemeManager för tema istället för property binding
+    readonly property var theme: ThemeManager.theme
     property var model
     
     signal fileDoubleClicked(int index)
     signal fileDragged(int index)
     signal fileDropped(string sourcePath, string targetPath)
+    
+    // Cache för filtypsikoner för att undvika omkompilering av bildresurser
+    property var iconCache: ({})
     
     Rectangle {
         id: headerRect
@@ -24,15 +28,39 @@ Rectangle {
         color: theme.header
         radius: 3
         
+        // Förinställda värden för att undvika bindningar
+        readonly property real nameWidth: 0.4
+        readonly property real sizeWidth: 0.2
+        
         RowLayout {
             anchors.fill: parent
             anchors.leftMargin: 8
             anchors.rightMargin: 8
             spacing: 5
             
-            Text { text: "Namn"; font.pixelSize: 14; font.bold: true; color: theme.accent; Layout.preferredWidth: parent.width * 0.4 }
-            Text { text: "Storlek"; font.pixelSize: 14; font.bold: true; color: theme.accent; Layout.preferredWidth: parent.width * 0.2 }
-            Text { text: "Datum"; font.pixelSize: 14; font.bold: true; color: theme.accent; Layout.fillWidth: true }
+            Text {
+                text: "Namn"
+                font.pixelSize: 14
+                font.bold: true
+                color: theme.accent
+                Layout.preferredWidth: parent.width * headerRect.nameWidth
+            }
+            
+            Text {
+                text: "Storlek"
+                font.pixelSize: 14
+                font.bold: true
+                color: theme.accent
+                Layout.preferredWidth: parent.width * headerRect.sizeWidth
+            }
+            
+            Text {
+                text: "Datum"
+                font.pixelSize: 14
+                font.bold: true
+                color: theme.accent
+                Layout.fillWidth: true
+            }
         }
     }
     
@@ -46,13 +74,35 @@ Rectangle {
         clip: true
         model: fileListRoot.model
         
-        ScrollBar.vertical: ScrollBar { active: true }
+        // Optimera genom att förladda bara de objekt som syns
+        cacheBuffer: 200
         
-        delegate: Rectangle {
-            id: delegateItem
+        ScrollBar.vertical: ScrollBar { 
+            active: true
+            // Optimera genom att skapa transparent bakgrund direkt
+            // istället för att använda komplexa bindningar
+            background: Rectangle {
+                color: "transparent"
+            }
+        }
+        
+        delegate: Item {
+            id: delegateRoot
             width: fileListView.width
             height: 30
-            color: index % 2 === 0 ? theme.listItem : theme.listItemAlt
+            
+            // Undvik att skapa nya objekt vid varje omrenderad rad
+            Component.onCompleted: {
+                // Använd index modulo 2 för att avgöra bakgrundsfärgen
+                delegateBackground.color = (index % 2 === 0) ? 
+                    theme.listItem : theme.listItemAlt;
+            }
+            
+            Rectangle {
+                id: delegateBackground
+                anchors.fill: parent
+                // Färgsättning sker i Component.onCompleted för att undvika bindningar
+            }
             
             Rectangle {
                 id: hoverRect
@@ -69,26 +119,22 @@ Rectangle {
                 
                 RowLayout {
                     spacing: 5
-                    Layout.preferredWidth: parent.width * 0.4
+                    Layout.preferredWidth: parent.width * headerRect.nameWidth
                     
-                    // Filtypsikon
+                    // Filtypsikon - optimerad genom att använda förenklad kod
                     Rectangle {
                         width: 16
                         height: 16
-                        color: "transparent"
+                        // Använd färdig färgsättning istället för bindning
+                        color: model.isDirectory ? Qt.rgba(theme.accent.r, theme.accent.g, theme.accent.b, 0.3) : "transparent"
+                        radius: 2
+                        visible: true
                         
-                        Rectangle {
-                            anchors.fill: parent
-                            color: model.isDirectory ? theme.accent : "transparent"
-                            opacity: model.isDirectory ? 0.3 : 0
-                            radius: 2
-                            
-                            Text {
-                                anchors.centerIn: parent
-                                text: model.isDirectory ? "D" : "F"
-                                color: theme.text
-                                font.pixelSize: 10
-                            }
+                        Text {
+                            anchors.centerIn: parent
+                            text: model.isDirectory ? "D" : "F"
+                            color: theme.text
+                            font.pixelSize: 10
                         }
                     }
                     
@@ -107,7 +153,7 @@ Rectangle {
                     text: model.fileSize
                     font.pixelSize: 14
                     color: theme.text
-                    Layout.preferredWidth: parent.width * 0.2
+                    Layout.preferredWidth: parent.width * headerRect.sizeWidth
                 }
                 
                 // Datum
@@ -126,27 +172,21 @@ Rectangle {
                 hoverEnabled: true
                 acceptedButtons: Qt.LeftButton | Qt.RightButton
                 
-                onEntered: function() {
-                    hoverRect.opacity = 0.2
-                }
+                onEntered: hoverRect.opacity = 0.2
+                onExited: hoverRect.opacity = 0
                 
-                onExited: function() {
-                    hoverRect.opacity = 0
-                }
-                
-                onClicked: function(mouse) {
+                onClicked: {
                     fileListView.currentIndex = index
-                    if (mouse.button === Qt.RightButton) contextMenu.popup()
+                    if (mouse.button === Qt.RightButton) contextMenuLoader.showMenu()
                 }
                 
-                onDoubleClicked: function() {
-                    fileListRoot.fileDoubleClicked(index)
-                }
+                onDoubleClicked: fileListRoot.fileDoubleClicked(index)
                 
                 // Stöd för drag and drop
                 drag.target: dragRect
                 drag.axis: Drag.XAndYAxis
                 
+                // Använd direkta funktioner för onPressed/Released för bättre prestanda
                 onPressed: function(mouse) {
                     if (mouse.button === Qt.LeftButton) {
                         dragRect.dragFilePath = model.filePath
@@ -172,7 +212,7 @@ Rectangle {
                 }
             }
             
-            // Visuell drag-representation
+            // Visuell drag-representation - optimerad genom att reducera bindningar
             Rectangle {
                 id: dragRect
                 visible: false
@@ -200,54 +240,76 @@ Rectangle {
                 
                 states: State {
                     name: "DraggingState"
+                    // Enklare ParentChange som förändrar mindre egenskaper
                     ParentChange {
                         target: dragRect
                         parent: fileListView
-                        x: fileListView.mapFromItem(delegateItem.mouseArea, delegateItem.mouseArea.mouseX - Drag.hotSpot.x).x
-                        y: fileListView.mapFromItem(delegateItem.mouseArea, delegateItem.mouseArea.mouseY - Drag.hotSpot.y).y
                     }
                 }
             }
             
-            // Kontextmeny
-            Menu {
-                id: contextMenu
+            // Kontextmeny - använd lazy loading med Loader för att minska uppstartstiden
+            Loader {
+                id: contextMenuLoader
+                active: false
                 
-                MenuItem {
-                    text: model.isDirectory ? "Öppna mapp" : "Öppna fil"
-                    onTriggered: fileListRoot.fileDoubleClicked(index)
-                    enabled: model.filePath
-                }
-                
-                MenuItem {
-                    text: "Ladda ner/upp"
-                    onTriggered: console.log("Ladda ner/upp: " + model.fileName)
-                    enabled: model.filePath
-                }
-                
-                MenuItem {
-                    text: "Döp om"
-                    onTriggered: {
-                        console.log("Döp om (behöver dialog): " + model.filePath)
+                sourceComponent: Menu {
+                    id: contextMenu
+                    
+                    MenuItem {
+                        text: model.isDirectory ? "Öppna mapp" : "Öppna fil"
+                        onTriggered: fileListRoot.fileDoubleClicked(index)
+                        enabled: model.filePath !== ""
                     }
-                    enabled: model.filePath
-                }
-                
-                MenuItem {
-                    text: "Ta bort"
-                    onTriggered: {
-                        console.log("Försöker ta bort: " + model.filePath)
-                        fileListRoot.model.deletePath(model.filePath)
+                    
+                    MenuItem {
+                        text: "Ladda ner/upp"
+                        onTriggered: console.log("Ladda ner/upp: " + model.fileName)
+                        enabled: model.filePath !== ""
                     }
-                    enabled: model.filePath
+                    
+                    MenuItem {
+                        text: "Döp om"
+                        onTriggered: {
+                            console.log("Döp om (behöver dialog): " + model.filePath)
+                        }
+                        enabled: model.filePath !== ""
+                    }
+                    
+                    MenuItem {
+                        text: "Ta bort"
+                        onTriggered: {
+                            console.log("Försöker ta bort: " + model.filePath)
+                            fileListRoot.model.deletePath(model.filePath)
+                        }
+                        enabled: model.filePath !== ""
+                    }
+                    
+                    MenuSeparator {}
+                    
+                    MenuItem {
+                        text: "Skapa mapp här"
+                        onTriggered: {
+                            console.log("Skapa mapp här (behöver dialog) i: " + fileListRoot.model.currentPath)
+                        }
+                    }
+                    
+                    Component.onCompleted: {
+                        popup();
+                    }
                 }
                 
-                MenuSeparator {}
-                
-                MenuItem {
-                    text: "Skapa mapp här"
-                    onTriggered: {
-                        console.log("Skapa mapp här (behöver dialog) i: " + fileListRoot.model.currentPath)
+                function showMenu() {
+                    active = true;
+                }
+            }
+            
+            // Optimera genom att ladda kontextmenyn endast när det behövs
+            Connections {
+                target: mouseArea
+                function onClicked(mouse) {
+                    if (mouse.button === Qt.RightButton) {
+                        contextMenuLoader.showMenu();
                     }
                 }
             }

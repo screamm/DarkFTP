@@ -8,6 +8,7 @@
         <file>qml/TransferPanel.qml</file>
         <file>qml/ConnectionDialog.qml</file>
         <file>qml/StatusBar.qml</file>
+        <file>qml/ThemeManager.qml</file>
         <file>qml/qmldir</file>
     </qresource>
 </RCC>

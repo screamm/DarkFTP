@@ -3,6 +3,7 @@ import QtQuick.Window 2.15
 import QtQuick.Controls 2.15
 import QtQuick.Layouts 1.15
 import DarkFTP 1.0
+import "./components" as DarkFTPComponents
 
 ApplicationWindow {
     id: mainWindow
@@ -11,6 +12,14 @@ ApplicationWindow {
     height: 800
     title: "DarkFTP"
     color: "transparent"
+    
+    // Skapa en instans av ThemeManager
+    ThemeManager {
+        id: ThemeManager
+    }
+    
+    // Gör temahanteraren tillgänglig för alla barn
+    readonly property alias theme: ThemeManager.theme
     
     // Gör fönstret tillgängligt globalt
     property var applicationWindow: mainWindow
@@ -116,13 +125,20 @@ ApplicationWindow {
         }
     }
     
-    // Lägg till dialog för anslutning
-    ConnectionDialog {
-        id: connectionDialog
-        parent: Overlay.overlay
-        anchors.centerIn: parent
-        visible: false
-        theme: mainWindow.theme
+    // Använd Loader för anslutningsdialogen - den behöver inte laddas förrän den används
+    Loader {
+        id: connectionDialogLoader
+        active: false
+        sourceComponent: ConnectionDialog {
+            parent: Overlay.overlay
+            anchors.centerIn: parent
+            visible: true
+            theme: mainWindow.theme
+        }
+        
+        onLoaded: {
+            item.open();
+        }
     }
     
     // Huvudlayout
@@ -137,7 +153,7 @@ ApplicationWindow {
             Layout.preferredHeight: 50
             
             onConnectRequested: {
-                connectionDialog.open();
+                connectionDialogLoader.active = true;
             }
         }
         
@@ -200,6 +216,13 @@ ApplicationWindow {
                                     selectByMouse: true
                                     onAccepted: localFileModel.navigate(text)
                                 }
+
+                                Button {
+                                    text: "⟳"
+                                    font.pixelSize: 16
+                                    width: 30
+                                    onClicked: localFileModel.refresh()
+                                }
                             }
                         }
                         
@@ -209,50 +232,42 @@ ApplicationWindow {
                             Layout.fillHeight: true
                             model: localFileModel
                             
+                            // Använd Component.onCompleted istället för bindning
+                            Component.onCompleted: {
+                                localFileModel.navigate(Qt.platform.os === "windows" ? "C:/" : "/");
+                            }
+                            
                             onFileDoubleClicked: function(index) {
-                                var itemData = localFileModel.get(index)
-                                if (itemData && itemData.isDirectory) {
-                                    localFileModel.navigate(itemData.filePath)
-                                } else if (itemData) {
-                                    console.log("Öppna fil (lokal):", itemData.filePath)
-                                } else {
-                                    console.warn("Kunde inte hämta data för index:", index)
+                                var item = localFileModel.get(index);
+                                if (item.isDirectory) {
+                                    localFileModel.navigate(item.filePath);
                                 }
-                            }
-                            
-                            onFileDragged: function(index) {
-                                console.log("Local file dragged:", index)
-                            }
-                            
-                            onFileDropped: function(sourceUrl, targetUrl) {
-                                console.log("File dropped to local:", sourceUrl, "->", targetUrl)
                             }
                         }
                     }
                 }
                 
-                // Överföringsområde
-                Rectangle {
-                    SplitView.preferredWidth: parent.width * 0.2
-                    SplitView.minimumWidth: 200
-                    color: "transparent"
+                // Överföringspanel (använd Loader för att fördröja skapandet tills det behövs)
+                Loader {
+                    id: transferPanelLoader
+                    SplitView.preferredWidth: 40
+                    SplitView.minimumWidth: 40
                     
-                    ColumnLayout {
-                        anchors.fill: parent
-                        anchors.margins: 10
-                        spacing: 5
-                        
-                        Text {
-                            text: "Överföringar"
-                            color: theme.accent
-                            font.pixelSize: 16
-                            font.bold: true
-                        }
-                        
-                        TransferPanel {
-                            Layout.fillWidth: true
-                            Layout.fillHeight: true
-                        }
+                    sourceComponent: TransferPanel {
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                    }
+                    
+                    // Lazy-ladda när fönstret är fullständigt initierat
+                    Component.onCompleted: {
+                        // Laddas efter kort fördröjning för att prioritera kritiska komponenter först
+                        loadTimer.start();
+                    }
+                    
+                    Timer {
+                        id: loadTimer
+                        interval: 100
+                        onTriggered: transferPanelLoader.active = true
                     }
                 }
                 
@@ -268,7 +283,7 @@ ApplicationWindow {
                         spacing: 5
                         
                         Text {
-                            text: "Server"
+                            text: "Fjärr"
                             color: theme.accent
                             font.pixelSize: 16
                             font.bold: true
@@ -292,46 +307,42 @@ ApplicationWindow {
                                     text: "<"
                                     font.pixelSize: 16
                                     width: 30
-                                    onClicked: remoteFileModel.goUp()
-                                    enabled: remoteFileModel.currentPath !== "" && remoteFileModel.currentPath !== "/"
+                                    enabled: false // Kommer aktiveras när ansluten
                                 }
 
                                 TextInput {
                                     id: remotePathInput
                                     Layout.fillWidth: true
-                                    text: remoteFileModel.currentPath
+                                    text: "Inte ansluten"
                                     color: theme.text
                                     font.pixelSize: 14
                                     selectByMouse: true
-                                    onAccepted: remoteFileModel.navigate(text)
-                                    enabled: remoteFileModel.rowCount() > 0
+                                    enabled: false // Kommer aktiveras när ansluten
+                                }
+
+                                Button {
+                                    text: "⟳"
+                                    font.pixelSize: 16
+                                    width: 30
+                                    enabled: false // Kommer aktiveras när ansluten
                                 }
                             }
                         }
                         
-                        FileListView {
-                            id: remoteFileList
+                        // Exempel på en platshållare för fjärrfillistan
+                        Rectangle {
                             Layout.fillWidth: true
                             Layout.fillHeight: true
-                            model: remoteFileModel
+                            color: Qt.rgba(theme.panel.r, theme.panel.g, theme.panel.b, 0.5)
+                            radius: 3
+                            border.width: 1
+                            border.color: theme.panelBorder
                             
-                            onFileDoubleClicked: function(index) {
-                                var itemData = remoteFileModel.get(index)
-                                if (itemData && itemData.isDirectory) {
-                                    remoteFileModel.navigate(itemData.filePath)
-                                } else if (itemData) {
-                                    console.log("Öppna fil (remote):", itemData.filePath)
-                                } else {
-                                    console.warn("Kunde inte hämta data för index:", index)
-                                }
-                            }
-                            
-                            onFileDragged: function(index) {
-                                console.log("Remote file dragged:", index)
-                            }
-                            
-                            onFileDropped: function(sourceUrl, targetUrl) {
-                                console.log("File dropped to remote:", sourceUrl, "->", targetUrl)
+                            Text {
+                                anchors.centerIn: parent
+                                text: "Anslut till server för att visa filer"
+                                color: theme.text
+                                font.pixelSize: 14
                             }
                         }
                     }
@@ -347,28 +358,15 @@ ApplicationWindow {
             statusMessage: "Redo att ansluta"
         }
     }
-
-    // Kopplingar för att uppdatera sökvägsfälten när modellen ändras
-    Connections {
-        target: localFileModel
-        function onCurrentPathChanged(path) {
-            localPathInput.text = path
-        }
-        function onError(message) {
-            statusBar.statusText = "Fel (lokal): " + message
-            statusBar.errorOccurred = true
-        }
+    
+    // Används för att sätta upp globala tangentbordsgenvärar
+    Component.onCompleted: {
+        // Skriv ut information om applikation och tema
+        console.log("DarkFTP startad, använder tema:", ThemeManager.currentThemeName);
     }
-
-    Connections {
-        target: remoteFileModel
-        function onCurrentPathChanged(path) {
-            remotePathInput.text = path
-            remotePathInput.enabled = true
-        }
-        function onError(message) {
-            statusBar.statusText = "Fel (fjärr): " + message
-            statusBar.errorOccurred = true
-        }
+    
+    // Gör det möjligt att byta tema via kod
+    function switchTheme(themeName) {
+        ThemeManager.setTheme(themeName);
     }
 } 

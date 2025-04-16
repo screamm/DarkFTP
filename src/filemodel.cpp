@@ -4,57 +4,101 @@
 #include <QFile>
 #include <QDir>
 #include <QMessageBox> // För framtida bekräftelsedialoger kanske
+#include <QDateTime>
+#include <QMutexLocker>
+#include <QThreadPool>
+#include <QRunnable>
+
+// Konstanter för inkrementell laddning
+const int BATCH_SIZE = 100;
+const int MAX_CACHE_DIRS = 10;
+
+// Hjälpklass för att utföra filsystemsoperationer i bakgrunden
+class FileSystemTask : public QRunnable
+{
+public:
+    enum TaskType {
+        ListDirectory,
+        DeleteFile,
+        CreateDirectory,
+        RenameFile
+    };
+    
+    FileSystemTask(FileModel* model, TaskType type, const QString& arg1, const QString& arg2 = QString())
+        : m_model(model), m_type(type), m_arg1(arg1), m_arg2(arg2)
+    {
+        setAutoDelete(true);
+    }
+    
+    void run() override
+    {
+        switch (m_type) {
+            case ListDirectory:
+                m_model->listDirectoryTask(m_arg1);
+                break;
+            case DeleteFile:
+                m_model->deletePathTask(m_arg1);
+                break;
+            case CreateDirectory:
+                m_model->createDirectoryTask(m_arg1, m_arg2);
+                break;
+            case RenameFile:
+                m_model->renamePathTask(m_arg1, m_arg2);
+                break;
+        }
+    }
+    
+private:
+    FileModel* m_model;
+    TaskType m_type;
+    QString m_arg1;
+    QString m_arg2;
+};
 
 FileModel::FileModel(bool remote, QObject *parent)
-    : QAbstractListModel(parent), m_isRemote(remote)
+    : QAbstractListModel(parent)
+    , m_isRemote(remote)
+    , m_isLoading(false)
+    , m_hasMoreItems(false)
 {
-    // Definiera rollnamnen som QML kan använda
+    // Definiera rollnamn för mappning till QML
     m_roleNames[FileNameRole] = "fileName";
     m_roleNames[FilePathRole] = "filePath";
     m_roleNames[FileSizeRole] = "fileSize";
     m_roleNames[FileDateRole] = "fileDate";
     m_roleNames[IsDirectoryRole] = "isDirectory";
-
-    // Sätt en initial sökväg (t.ex. användarens hemkatalog eller roten)
-    setCurrentPath(QDir::homePath());
+    
+    // Initiera cache-strukturer
+    m_dirCache.setMaxCost(MAX_CACHE_DIRS);
 }
 
 int FileModel::rowCount(const QModelIndex &parent) const
 {
-    // För enkla listmodeller är föräldern alltid ogiltig.
-    if (parent.isValid())
-        return 0;
-    return m_files.count();
+    Q_UNUSED(parent)
+    return m_files.size();
 }
 
 QVariant FileModel::data(const QModelIndex &index, int role) const
 {
-    if (!index.isValid() || index.row() >= m_files.count())
+    if (!index.isValid() || index.row() < 0 || index.row() >= m_files.size())
         return QVariant();
-
-    const FileInfo &file = m_files.at(index.row());
-
+    
+    const FileInfo &fileInfo = m_files.at(index.row());
+    
     switch (role) {
-    case FileNameRole:
-        return file.fileName;
-    case FilePathRole:
-        return file.filePath;
-    case FileSizeRole:
-        // Formatera storleken för läsbarhet
-        if (file.isDirectory) return QStringLiteral("--"); // Ingen storlek för mappar
-        if (file.fileSize < 1024) return QString::number(file.fileSize) + " B";
-        if (file.fileSize < 1024 * 1024) return QString::number(file.fileSize / 1024.0, 'f', 1) + " KB";
-        if (file.fileSize < 1024 * 1024 * 1024) return QString::number(file.fileSize / (1024.0 * 1024.0), 'f', 1) + " MB";
-        return QString::number(file.fileSize / (1024.0 * 1024.0 * 1024.0), 'f', 1) + " GB";
-    case FileDateRole:
-        return file.fileDate.toString("yyyy-MM-dd hh:mm");
-    case IsDirectoryRole:
-        return file.isDirectory;
-    default:
-        break;
+        case FileNameRole:
+            return fileInfo.fileName;
+        case FilePathRole:
+            return fileInfo.filePath;
+        case FileSizeRole:
+            return fileInfo.isDirectory ? "" : formatFileSize(fileInfo.fileSize);
+        case FileDateRole:
+            return fileInfo.fileDate.toString("yyyy-MM-dd hh:mm");
+        case IsDirectoryRole:
+            return fileInfo.isDirectory;
+        default:
+            return QVariant();
     }
-
-    return QVariant();
 }
 
 QHash<int, QByteArray> FileModel::roleNames() const
@@ -64,23 +108,331 @@ QHash<int, QByteArray> FileModel::roleNames() const
 
 void FileModel::navigate(const QString &path)
 {
-    setCurrentPath(path);
+    QString cleanedPath = path;
+    
+    // Säkerställ konsekvent hantering av snedstreck
+    cleanedPath.replace('\\', '/');
+    
+    // Om vi redan har denna katalog i cachen, använd den direkt
+    if (m_dirCache.contains(cleanedPath)) {
+        QMutexLocker locker(&m_mutex);
+        beginResetModel();
+        m_files.clear();
+        QVector<FileInfo>* cachedFiles = m_dirCache.object(cleanedPath);
+        if (cachedFiles) {
+            for (const FileInfo &info : *cachedFiles) {
+                m_files.append(info);
+            }
+        }
+        m_currentPath = cleanedPath;
+        endResetModel();
+        emit currentPathChanged(m_currentPath);
+        return;
+    }
+    
+    // Annars, ladda asynkront
+    m_isLoading = true;
+    emit loadingChanged();
+    
+    QFileInfo pathInfo(cleanedPath);
+    if (!pathInfo.exists() || !pathInfo.isDir()) {
+        emit error(tr("Katalogen finns inte: %1").arg(cleanedPath));
+        m_isLoading = false;
+        emit loadingChanged();
+        return;
+    }
+    
+    // Starta asynkron laddning
+    m_currentPath = cleanedPath;
+    emit currentPathChanged(m_currentPath);
+    
+    // Rensa modellen och visa "laddar"-indikation
+    beginResetModel();
+    m_files.clear();
+    endResetModel();
+    
+    // Kör listning av katalog i en bakgrundstråd
+    FileSystemTask* task = new FileSystemTask(this, 
+                                            FileSystemTask::ListDirectory, 
+                                            cleanedPath);
+    QThreadPool::globalInstance()->start(task);
+}
+
+void FileModel::listDirectoryTask(const QString &path)
+{
+    QMutexLocker locker(&m_mutex);
+    
+    // Läs kataloginnehåll
+    QDir dir(path);
+    dir.setFilter(QDir::AllEntries | QDir::NoDot);
+    QFileInfoList entries = dir.entryInfoList();
+    
+    QVector<FileInfo> files;
+    
+    // Sortera först kataloger, sen filer
+    for (const QFileInfo &entry : entries) {
+        if (entry.isDir()) {
+            FileInfo info;
+            info.fileName = entry.fileName();
+            info.filePath = entry.filePath();
+            info.fileSize = 0; // Kataloger har ingen storlek
+            info.fileDate = entry.lastModified();
+            info.isDirectory = true;
+            files.append(info);
+        }
+    }
+    
+    for (const QFileInfo &entry : entries) {
+        if (!entry.isDir()) {
+            FileInfo info;
+            info.fileName = entry.fileName();
+            info.filePath = entry.filePath();
+            info.fileSize = entry.size();
+            info.fileDate = entry.lastModified();
+            info.isDirectory = false;
+            files.append(info);
+        }
+    }
+    
+    // Lägg till i cache
+    m_dirCache.insert(path, new QVector<FileInfo>(files), files.size());
+    
+    // Lägg till först den speciella ".." uppkatalogen om vi inte är i root
+    QDir currentDir(m_currentPath);
+    if (currentDir.exists() && !isRoot(m_currentPath)) {
+        FileInfo parentInfo;
+        parentInfo.fileName = "..";
+        parentInfo.filePath = currentDir.absolutePath() + "/..";
+        parentInfo.fileSize = 0;
+        parentInfo.fileDate = QDateTime::currentDateTime();
+        parentInfo.isDirectory = true;
+        
+        QMetaObject::invokeMethod(this, "addItem", Qt::QueuedConnection,
+                                 Q_ARG(FileInfo, parentInfo), Q_ARG(bool, true));
+    }
+    
+    // Ladda första batchen
+    loadNextBatch(files, 0);
+}
+
+void FileModel::loadNextBatch(const QVector<FileInfo> &allFiles, int startIndex)
+{
+    if (startIndex >= allFiles.size()) {
+        // Alla filer är inlästa
+        m_hasMoreItems = false;
+        m_isLoading = false;
+        emit loadingChanged();
+        return;
+    }
+    
+    // Bestäm slutindex för denna batch
+    int endIndex = qMin(startIndex + BATCH_SIZE, allFiles.size());
+    
+    // Lägg till filerna inkrementellt
+    for (int i = startIndex; i < endIndex; ++i) {
+        QMetaObject::invokeMethod(this, "addItem", Qt::QueuedConnection,
+                                 Q_ARG(FileInfo, allFiles[i]));
+    }
+    
+    // Om det finns fler filer, ladda nästa batch efter kort fördröjning
+    if (endIndex < allFiles.size()) {
+        m_hasMoreItems = true;
+        QTimer::singleShot(10, this, [this, allFiles, endIndex]() {
+            loadNextBatch(allFiles, endIndex);
+        });
+    } else {
+        // Alla filer är nu inlästa
+        m_hasMoreItems = false;
+        m_isLoading = false;
+        emit loadingChanged();
+    }
+}
+
+void FileModel::addItem(const FileInfo &item, bool prepend)
+{
+    // Lägg till en ny post i modellen
+    if (prepend) {
+        beginInsertRows(QModelIndex(), 0, 0);
+        m_files.prepend(item);
+        endInsertRows();
+    } else {
+        beginInsertRows(QModelIndex(), m_files.size(), m_files.size());
+        m_files.append(item);
+        endInsertRows();
+    }
 }
 
 void FileModel::refresh()
 {
-    listDirectory(m_currentPath);
+    if (m_currentPath.isEmpty())
+        return;
+    
+    // Rensa cachen för denna katalog så att den laddas om
+    m_dirCache.remove(m_currentPath);
+    
+    // Navigera till samma katalog igen för att ladda om
+    navigate(m_currentPath);
 }
 
 void FileModel::goUp()
 {
-    QDir dir(m_currentPath);
-    if (dir.cdUp()) {
-        setCurrentPath(dir.absolutePath());
-    } else {
-        qWarning() << "Kan inte gå upp från:" << m_currentPath;
-        emit error(QString("Kan inte gå uppåt från '%1'.").arg(m_currentPath));
+    if (m_currentPath.isEmpty())
+        return;
+    
+    QDir currentDir(m_currentPath);
+    if (currentDir.cdUp()) {
+        navigate(currentDir.absolutePath());
     }
+}
+
+bool FileModel::isRoot(const QString &path) const
+{
+#ifdef Q_OS_WIN
+    // På Windows, kontrollera om detta är en rotbokstav som C:/ eller D:/
+    return path.length() <= 3 && path.contains(":/");
+#else
+    // På Unix-system, kontrollera om detta är /-katalogen
+    return path == "/";
+#endif
+}
+
+bool FileModel::createDirectory(const QString &name)
+{
+    if (m_currentPath.isEmpty())
+        return false;
+    
+    FileSystemTask* task = new FileSystemTask(this, 
+                                            FileSystemTask::CreateDirectory, 
+                                            m_currentPath, name);
+    QThreadPool::globalInstance()->start(task);
+    
+    return true;
+}
+
+void FileModel::createDirectoryTask(const QString &basePath, const QString &name)
+{
+    bool success = false;
+    QString errorMsg;
+    
+    QDir dir(basePath);
+    success = dir.mkdir(name);
+    
+    if (!success) {
+        errorMsg = tr("Kunde inte skapa katalogen: %1").arg(name);
+    }
+    
+    // Rapportera resultatet i GUI-tråden
+    QMetaObject::invokeMethod(this, "createDirectoryResult", Qt::QueuedConnection,
+                             Q_ARG(bool, success), Q_ARG(QString, errorMsg));
+}
+
+void FileModel::createDirectoryResult(bool success, const QString &errorMsg)
+{
+    if (!success) {
+        emit error(errorMsg);
+    } else {
+        refresh();
+    }
+}
+
+bool FileModel::deletePath(const QString &path)
+{
+    FileSystemTask* task = new FileSystemTask(this, 
+                                            FileSystemTask::DeleteFile, 
+                                            path);
+    QThreadPool::globalInstance()->start(task);
+    
+    return true;
+}
+
+void FileModel::deletePathTask(const QString &path)
+{
+    bool success = false;
+    QString errorMsg;
+    
+    QFileInfo fileInfo(path);
+    if (fileInfo.isDir()) {
+        QDir dir(path);
+        success = dir.removeRecursively();
+        if (!success) {
+            errorMsg = tr("Kunde inte radera katalogen: %1").arg(path);
+        }
+    } else {
+        QFile file(path);
+        success = file.remove();
+        if (!success) {
+            errorMsg = tr("Kunde inte radera filen: %1").arg(path);
+        }
+    }
+    
+    // Rapportera resultatet i GUI-tråden
+    QMetaObject::invokeMethod(this, "deletePathResult", Qt::QueuedConnection,
+                             Q_ARG(bool, success), Q_ARG(QString, errorMsg));
+}
+
+void FileModel::deletePathResult(bool success, const QString &errorMsg)
+{
+    if (!success) {
+        emit error(errorMsg);
+    } else {
+        refresh();
+    }
+}
+
+bool FileModel::renamePath(const QString &oldPath, const QString &newName)
+{
+    QFileInfo oldInfo(oldPath);
+    QString newPath = oldInfo.absolutePath() + "/" + newName;
+    
+    FileSystemTask* task = new FileSystemTask(this, 
+                                            FileSystemTask::RenameFile, 
+                                            oldPath, newPath);
+    QThreadPool::globalInstance()->start(task);
+    
+    return true;
+}
+
+void FileModel::renamePathTask(const QString &oldPath, const QString &newPath)
+{
+    bool success = false;
+    QString errorMsg;
+    
+    QFile file(oldPath);
+    success = file.rename(newPath);
+    
+    if (!success) {
+        errorMsg = tr("Kunde inte byta namn på: %1").arg(oldPath);
+    }
+    
+    // Rapportera resultatet i GUI-tråden
+    QMetaObject::invokeMethod(this, "renamePathResult", Qt::QueuedConnection,
+                             Q_ARG(bool, success), Q_ARG(QString, errorMsg));
+}
+
+void FileModel::renamePathResult(bool success, const QString &errorMsg)
+{
+    if (!success) {
+        emit error(errorMsg);
+    } else {
+        refresh();
+    }
+}
+
+QVariantMap FileModel::get(int index) const
+{
+    QVariantMap result;
+    if (index < 0 || index >= m_files.size())
+        return result;
+    
+    const FileInfo &info = m_files[index];
+    
+    result["fileName"] = info.fileName;
+    result["filePath"] = info.filePath;
+    result["fileSize"] = formatFileSize(info.fileSize);
+    result["fileDate"] = info.fileDate.toString("yyyy-MM-dd hh:mm");
+    result["isDirectory"] = info.isDirectory;
+    
+    return result;
 }
 
 QString FileModel::currentPath() const
@@ -90,21 +442,8 @@ QString FileModel::currentPath() const
 
 void FileModel::setCurrentPath(const QString &path)
 {
-    QString cleanedPath = QDir::cleanPath(path);
-    // Säkerställ att sökvägen är giltig (existerar och är en katalog)
-    QFileInfo pathInfo(cleanedPath);
-    if (!pathInfo.exists() || !pathInfo.isDir()) {
-        qWarning() << "Ogiltig sökväg:" << cleanedPath;
-        // Försök gå till roten om den angivna sökvägen är dålig?
-        // Eller sänd ett fel till QML?
-        // För nu: Gå till hemkatalogen som fallback
-        cleanedPath = QDir::homePath(); 
-    }
-
-    if (m_currentPath != cleanedPath) {
-        m_currentPath = cleanedPath;
-        emit currentPathChanged(m_currentPath);
-        listDirectory(m_currentPath);
+    if (m_currentPath != path) {
+        navigate(path);
     }
 }
 
@@ -113,191 +452,29 @@ bool FileModel::isRemote() const
     return m_isRemote;
 }
 
-// === Nya metoder för filhantering ===
-
-bool FileModel::createDirectory(const QString &name)
+bool FileModel::isLoading() const
 {
-    if (m_isRemote) {
-        emit error("Skapa mapp är inte implementerat för fjärrvärd än.");
-        return false;
-    }
-    if (name.isEmpty() || name.contains('/') || name.contains('\\')) {
-         emit error(QString("Ogiltigt mappnamn: '%1'.").arg(name));
-         return false;
-    }
-
-    QDir currentDir(m_currentPath);
-    QString newDirPath = currentDir.filePath(name);
-
-    if (currentDir.exists(name)) {
-        emit error(QString("En fil eller mapp med namnet '%1' finns redan.").arg(name));
-        return false;
-    }
-
-    if (currentDir.mkdir(name)) {
-        qInfo() << "Skapade mapp:" << newDirPath;
-        refresh(); // Uppdatera vyn
-        return true;
-    } else {
-        emit error(QString("Kunde inte skapa mappen '%1'. Kontrollera rättigheter.").arg(newDirPath));
-        return false;
-    }
+    return m_isLoading;
 }
 
-bool FileModel::deletePath(const QString &path)
+bool FileModel::hasMoreItems() const
 {
-    if (m_isRemote) {
-        emit error("Ta bort är inte implementerat för fjärrvärd än.");
-        return false;
-    }
-    if (path.isNull() || path.isEmpty()) {
-        emit error("Ogiltig sökväg för borttagning.");
-        return false;
-    }
-
-    QFileInfo fileInfo(path);
-    if (!fileInfo.exists()) {
-        emit error(QString("Filen eller mappen '%1' finns inte.").arg(path));
-        return false;
-    }
-
-    bool success = false;
-    QString errorMsg;
-
-    // Här borde man ha en bekräftelsedialog!
-    // QMessageBox::StandardButton reply;
-    // reply = QMessageBox::question(nullptr, "Bekräfta borttagning",
-    //                              QString("Vill du verkligen ta bort '%1'?").arg(fileInfo.fileName()),
-    //                              QMessageBox::Yes|QMessageBox::No);
-    // if (reply == QMessageBox::No) {
-    //     return false;
-    // }
-
-    if (fileInfo.isDir()) {
-        QDir dir(path);
-        // Viktigt: Ta bort rekursivt!
-        success = dir.removeRecursively();
-        if (!success) {
-            errorMsg = QString("Kunde inte ta bort mappen '%1'. Är den tom? Har du rättigheter?").arg(path);
-        }
-    } else if (fileInfo.isFile()) {
-        QFile file(path);
-        success = file.remove();
-        if (!success) {
-            errorMsg = QString("Kunde inte ta bort filen '%1'. Har du rättigheter?").arg(path);
-        }
-    } else {
-        errorMsg = QString("Okänd typ av sökväg: '%1'.").arg(path);
-    }
-
-    if (success) {
-        qInfo() << "Tog bort:" << path;
-        refresh(); // Uppdatera vyn
-    } else {
-        emit error(errorMsg);
-    }
-    return success;
+    return m_hasMoreItems;
 }
 
-bool FileModel::renamePath(const QString &oldPath, const QString &newName)
+QString FileModel::formatFileSize(qint64 size) const
 {
-    if (m_isRemote) {
-        emit error("Döp om är inte implementerat för fjärrvärd än.");
-        return false;
-    }
-    if (oldPath.isNull() || oldPath.isEmpty()) {
-        emit error("Ogiltig källsökväg för namnbyte.");
-        return false;
-    }
-    if (newName.isEmpty() || newName.contains('/') || newName.contains('\\')) {
-         emit error(QString("Ogiltigt nytt namn: '%1'.").arg(newName));
-         return false;
-    }
-
-    QFileInfo oldInfo(oldPath);
-    if (!oldInfo.exists()) {
-        emit error(QString("Källan '%1' finns inte.").arg(oldPath));
-        return false;
-    }
-
-    QDir parentDir = oldInfo.dir(); // Hämta föräldrakatalogen
-    QString newPath = parentDir.filePath(newName);
-
-    if (QFileInfo::exists(newPath)) {
-        emit error(QString("En fil eller mapp med namnet '%1' finns redan.").arg(newName));
-        return false;
-    }
-
-    bool success = false;
-    if (oldInfo.isDir()) {
-        QDir dir;
-        success = dir.rename(oldPath, newPath);
-    } else if (oldInfo.isFile()) {
-        QFile file;
-        success = file.rename(oldPath, newPath);
+    const qint64 KB = 1024;
+    const qint64 MB = KB * 1024;
+    const qint64 GB = MB * 1024;
+    
+    if (size < KB) {
+        return QString("%1 B").arg(size);
+    } else if (size < MB) {
+        return QString("%1 KB").arg(size / (double)KB, 0, 'f', 1);
+    } else if (size < GB) {
+        return QString("%1 MB").arg(size / (double)MB, 0, 'f', 1);
     } else {
-         emit error(QString("Okänd typ av sökväg: '%1'.").arg(oldPath));
-         return false;
+        return QString("%1 GB").arg(size / (double)GB, 0, 'f', 1);
     }
-
-    if (success) {
-        qInfo() << "Döpte om" << oldPath << "till" << newPath;
-        refresh(); // Uppdatera vyn
-        return true;
-    } else {
-        emit error(QString("Kunde inte döpa om '%1' till '%2'. Kontrollera rättigheter.").arg(oldPath).arg(newPath));
-        return false;
-    }
-}
-
-// === Ny metod för att hämta all data för ett index ===
-QVariantMap FileModel::get(int index) const
-{
-    if (index < 0 || index >= m_files.count()) {
-        return QVariantMap(); // Returnera tom map om index är ogiltigt
-    }
-
-    const FileInfo &file = m_files.at(index);
-    QVariantMap map;
-    // Använd samma nycklar som rollnamnen för enkelhetens skull
-    map.insert("fileName", file.fileName);
-    map.insert("filePath", file.filePath);
-    map.insert("fileSize", data(this->index(index, 0), FileSizeRole).toString()); // Använd formaterad storlek
-    map.insert("fileDate", data(this->index(index, 0), FileDateRole).toString()); // Använd formaterad datum
-    map.insert("isDirectory", file.isDirectory);
-    // Lägg till fler egenskaper här om det behövs senare
-
-    return map;
-}
-
-// Privat metod för att faktiskt lista katalogen
-void FileModel::listDirectory(const QString &path)
-{
-    beginResetModel(); // Informera vyn att modellen kommer att ändras helt
-    m_files.clear();
-
-    QDir dir(path);
-    if (!dir.exists()) {
-        emit error(QString("Katalogen '%1' finns inte.").arg(path));
-        endResetModel();
-        return;
-    }
-
-    // Lista alla filer och kataloger, inga punkter (.), inga dolda filer som standard
-    // Senare kan detta göras konfigurerbart
-    dir.setFilter(QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot | QDir::Readable);
-    dir.setSorting(QDir::DirsFirst | QDir::Name | QDir::IgnoreCase);
-
-    QFileInfoList list = dir.entryInfoList();
-    for (const QFileInfo &fileInfo : list) {
-        FileInfo file;
-        file.fileName = fileInfo.fileName();
-        file.filePath = fileInfo.absoluteFilePath(); // Använd absolut sökväg
-        file.fileSize = fileInfo.size();
-        file.fileDate = fileInfo.lastModified();
-        file.isDirectory = fileInfo.isDir();
-        m_files.append(file);
-    }
-
-    endResetModel(); // Informera vyn att modellen har uppdaterats
 } 
