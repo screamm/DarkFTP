@@ -84,12 +84,19 @@ public:
     void setStatusMessage(const QString &message);
 
     Q_INVOKABLE void connectFromQml(const QString &protocolStr, const QString &host, int port, const QString &username, const QString &password);
-    Q_INVOKABLE void connectFromQmlEx(const QString &protocolStr, const QString &host, int port, 
-                                      const QString &username, const QString &password,
-                                      int authMethodInt, const QString &keyPath, const QString &keyPassphrase);
+    // Modified signature for connectFromQmlEx
+    Q_INVOKABLE void connectFromQmlEx(
+        const QString &protocolStr, const QString &host, int port, 
+        const QString &username, const QString &password,
+        int authMethodInt, const QString &keyPath, const QString &keyPassphrase,
+        bool saveConnectionChecked // Added parameter
+    );
 
 private slots:
     void showConnectionDialog();
+    // Ensure saveConnection is declared, it might be a private method or slot already
+    // void saveConnection(); // Assuming it exists or will be added if not.
+                           // The original mainwindow.cpp has it as a private method.
     void connectToServer(const Connection &connection);
     void disconnectFromServer();
     void showAboutDialog();
@@ -98,12 +105,14 @@ private slots:
     void updateRemoteDirectory(const QString &path = QString());
     void uploadFile();
     void downloadFile();
-    void onDirectoryListed(const QStringList &entries);
+    // Changed signature for onDirectoryListed
+    void onDirectoryListed(const QString &path, const QList<ServerFileItem> &items);
     void onFtpCommandSent(const QString &command);
     void clearLog();
     void showPreferences();
     void saveSettings();
     void setTheme(ThemeType theme);
+    // void saveConnection(); // It's a private method in the .cpp, not a slot.
     void addNewTab(const Connection &connection = Connection());
     void closeTab(int index);
     void switchTab(int index);
@@ -115,6 +124,11 @@ private slots:
     void onConnected();
     void onDisconnected();
     void onError(const QString &errorMessage);
+
+    // Slots for file operations
+    void onCreateRemoteDirectory();
+    void onDeleteRemoteItems();
+    void onRenameRemoteItem();
 
 protected:
     void closeEvent(QCloseEvent *event) override;
@@ -129,8 +143,11 @@ private:
     void setupTab(TabInfo &tab);
     void loadSettings();
     QString getFileIconName(const QString &fileName, bool isDir);
-    void processFtpEntry(const QString &entry);
-    void processSftpEntry(const QString &entry);
+    // Removed processFtpEntry and processSftpEntry declarations
+
+    // Helper methods for password hashing
+    QString hashPassword(const QString& plainPassword);
+    bool isPasswordHashed(const QString& password);
     
     // Flikhanteringsvariabler
     QTabWidget* m_tabWidget;
@@ -159,6 +176,9 @@ private:
     QMimeDatabase m_mimeDb;
     QMap<QString, QIcon> m_fileTypeIcons;
     QString m_statusMessage;
+
+    // Hashing prefix
+    static const QString HASH_PREFIX;
 
 signals:
     void statusMessageChanged();

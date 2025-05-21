@@ -32,8 +32,10 @@ public:
     Connection()
         : protocol(FTP)
         , port(0)
-        , savePassword(false)
-        , authMethod(PASSWORD)
+        , savePassword(false) // Default to false
+        , authMethod(PASSWORD) // Default to PASSWORD
+        , privateKeyPath("")   // Initialize new field
+        , keyPassphrase("")    // Initialize new field
     {
     }
     
@@ -42,17 +44,17 @@ public:
      */
     Connection(const QString &name, Protocol protocol, const QString &host, 
                quint16 port, const QString &username, const QString &password,
-               bool savePassword)
+               bool savePasswordValue) // Renamed to avoid conflict with member
         : name(name)
         , protocol(protocol)
         , host(host)
         , port(port)
         , username(username)
         , password(password)
-        , savePassword(savePassword)
-        , authMethod(PASSWORD)
-        , privateKeyPath("")
-        , keyPassphrase("")
+        , savePassword(savePasswordValue) // Use parameter
+        , authMethod(PASSWORD)      // Default to PASSWORD
+        , privateKeyPath("")        // Initialize new field
+        , keyPassphrase("")         // Initialize new field
     {
     }
     
@@ -61,19 +63,31 @@ public:
      */
     Connection(const QString &name, Protocol protocol, const QString &host, 
                quint16 port, const QString &username, const QString &password,
-               bool savePassword, AuthMethod authMethod,
-               const QString &privateKeyPath, const QString &keyPassphrase)
+               bool savePasswordValue, AuthMethod authMethodValue, // Renamed to avoid conflict
+               const QString &privateKeyPathValue, const QString &keyPassphraseValue) // Renamed
         : name(name)
         , protocol(protocol)
         , host(host)
         , port(port)
         , username(username)
         , password(password)
-        , savePassword(savePassword)
-        , authMethod(authMethod)
-        , privateKeyPath(privateKeyPath)
-        , keyPassphrase(keyPassphrase)
+        , savePassword(savePasswordValue) // Use parameter
+        , authMethod(authMethodValue)   // Use parameter
+        , privateKeyPath(privateKeyPathValue) // Use parameter
+        , keyPassphrase(keyPassphraseValue)   // Use parameter
     {
+    }
+
+    // Helper methods from src/app/connection.h
+    bool isPasswordAuthRequired() const {
+        if (protocol == FTP) return true;
+        if (protocol == SFTP && (authMethod == PASSWORD || authMethod == BOTH)) return true;
+        return false;
+    }
+
+    bool isKeyAuthRequired() const {
+        if (protocol == SFTP && (authMethod == KEY || authMethod == BOTH) && !privateKeyPath.isEmpty()) return true;
+        return false;
     }
     
     /**
@@ -122,10 +136,10 @@ public:
     quint16 port;            ///< Portnummer
     QString username;        ///< Användarnamn för inloggning
     QString password;        ///< Lösenord för inloggning
-    bool savePassword;       ///< Om lösenordet ska sparas
+    // bool savePassword;    ///< Om lösenordet ska sparas - already exists, ensure it's used correctly
     AuthMethod authMethod;   ///< Autentiseringsmetod
-    QString privateKeyPath;  ///< Sökväg till privat SSH-nyckel (för SFTP)
-    QString keyPassphrase;   ///< Lösenfras för SSH-nyckeln (om den är krypterad)
+    // QString privateKeyPath;  ///< Sökväg till privat SSH-nyckel (för SFTP) - already exists
+    // QString keyPassphrase;   ///< Lösenfras för SSH-nyckeln (om den är krypterad) - already exists
 };
 
-#endif // CONNECTION_H 
+#endif // CONNECTION_H
